@@ -197,6 +197,34 @@ pub trait LineBufferProvider {
     );
 }
 
+/// Async variant of [`LineBufferProvider`] for use with [`SoftwareRenderer::render_by_line_async`].
+///
+/// This trait allows asynchronous processing of each rendered line, enabling async I/O operations
+/// (such as DMA transfers via async SPI) after each line is rendered. This is particularly useful
+/// for embedded systems where the display interface is async, allowing true line-by-line rendering
+/// without needing a full-screen framebuffer.
+///
+/// The `process_line` method receives a line buffer with already-rendered pixels and can perform
+/// async operations (e.g., byte-swapping and sending via async SPI DMA) before returning.
+pub trait AsyncLineBufferProvider {
+    /// The pixel type of the buffer
+    type TargetPixel: TargetPixel;
+
+    /// Called once per dirty line. The `render_fn` should be invoked to render pixels into a buffer,
+    /// after which async operations (such as sending the line to a display) can be performed.
+    ///
+    /// The `line` is the y position of the line to be drawn.
+    /// The `range` is the range within the line that is going to be rendered (eg, within the dirty region).
+    /// The `render_fn` function should be called to render the line, passing the buffer
+    /// corresponding to the specified line and range.
+    fn process_line(
+        &mut self,
+        line: usize,
+        range: core::ops::Range<usize>,
+        render_fn: impl FnOnce(&mut [Self::TargetPixel]),
+    ) -> impl core::future::Future<Output = ()>;
+}
+
 #[cfg(not(cbindgen))]
 const PHYSICAL_REGION_MAX_SIZE: usize = DirtyRegion::MAX_COUNT;
 // cbindgen can't understand associated const correctly, so hardcode the value
@@ -767,6 +795,47 @@ impl SoftwareRenderer {
                 self,
                 line_buffer,
             )
+        } else {
+            PhysicalRegion { ..Default::default() }
+        }
+    }
+
+    /// Async variant of [`Self::render_by_line`] that uses [`AsyncLineBufferProvider`].
+    ///
+    /// This works identically to `render_by_line`, but allows the line buffer provider's
+    /// `process_line` to be async. This enables async I/O operations (such as sending pixel
+    /// data via async SPI DMA) after each line is rendered, eliminating the need for a
+    /// full-screen framebuffer.
+    ///
+    /// This function returns the physical dirty region for this frame.
+    pub async fn render_by_line_async(
+        &self,
+        line_buffer: impl AsyncLineBufferProvider,
+    ) -> PhysicalRegion {
+        let Some(window) = self.maybe_window_adapter.borrow().as_ref().and_then(|w| w.upgrade())
+        else {
+            return Default::default();
+        };
+        let window_inner = WindowInner::from_pub(window.window());
+        #[cfg(feature = "systemfonts")]
+        self.text_layout_cache.clear_cache_if_scale_factor_changed(window.window());
+        let component_rc = window_inner.component();
+        let component = i_slint_core::item_tree::ItemTreeRc::borrow_pin(&component_rc);
+        if let Some(window_item) = i_slint_core::items::ItemRef::downcast_pin::<
+            i_slint_core::items::WindowItem,
+        >(component.as_ref().get_item_ref(0))
+        {
+            let factor = ScaleFactor::new(window_inner.scale_factor());
+            let size = LogicalSize::from_lengths(window_item.width(), window_item.height()).cast()
+                * factor;
+            render_window_frame_by_line_async(
+                window_inner,
+                window_item.background(),
+                size.cast(),
+                self,
+                line_buffer,
+            )
+            .await
         } else {
             PhysicalRegion { ..Default::default() }
         }
@@ -1376,6 +1445,142 @@ fn render_window_frame_by_line(
                     }
                 },
             );
+        }
+
+        if scene.current_line < to_draw_tr.origin.y_length() + to_draw_tr.size.height_length() {
+            scene.next_line();
+        }
+    }
+    scene.dirty_region
+}
+
+async fn render_window_frame_by_line_async(
+    window: &WindowInner,
+    background: Brush,
+    size: PhysicalSize,
+    renderer: &SoftwareRenderer,
+    mut line_buffer: impl AsyncLineBufferProvider,
+) -> PhysicalRegion {
+    let mut scene = prepare_scene(window, size, renderer);
+
+    let to_draw_tr = scene.dirty_region.bounding_rect();
+
+    let mut background_color = TargetPixel::background();
+    // FIXME gradient
+    TargetPixel::blend(&mut background_color, background.color().into());
+
+    while scene.current_line < to_draw_tr.origin.y_length() + to_draw_tr.size.height_length() {
+        for r in &scene.current_line_ranges {
+            line_buffer
+                .process_line(
+                    scene.current_line.get() as usize,
+                    r.start as usize..r.end as usize,
+                    |line_buffer| {
+                        let offset = r.start;
+
+                        line_buffer.fill(background_color);
+                        for span in scene.items[0..scene.current_items_index].iter().rev() {
+                            debug_assert!(scene.current_line >= span.pos.y_length());
+                            debug_assert!(
+                                scene.current_line
+                                    < span.pos.y_length() + span.size.height_length(),
+                            );
+                            if span.pos.x >= r.end {
+                                continue;
+                            }
+                            let begin = r.start.max(span.pos.x);
+                            let end = r.end.min(span.pos.x + span.size.width);
+                            if begin >= end {
+                                continue;
+                            }
+
+                            let extra_left_clip = begin - span.pos.x;
+                            let extra_right_clip = span.pos.x + span.size.width - end;
+                            let range_buffer = &mut line_buffer
+                                [(begin - offset) as usize..(end - offset) as usize];
+
+                            match span.command {
+                                SceneCommand::Rectangle { color } => {
+                                    TargetPixel::blend_slice(range_buffer, color);
+                                }
+                                SceneCommand::Texture { texture_index } => {
+                                    let texture =
+                                        &scene.vectors.textures[texture_index as usize];
+                                    draw_functions::draw_texture_line(
+                                        &PhysicalRect { origin: span.pos, size: span.size },
+                                        scene.current_line,
+                                        texture,
+                                        range_buffer,
+                                        extra_left_clip,
+                                        extra_right_clip,
+                                    );
+                                }
+                                SceneCommand::SharedBuffer { shared_buffer_index } => {
+                                    let texture = scene.vectors.shared_buffers
+                                        [shared_buffer_index as usize]
+                                        .as_texture();
+                                    draw_functions::draw_texture_line(
+                                        &PhysicalRect { origin: span.pos, size: span.size },
+                                        scene.current_line,
+                                        &texture,
+                                        range_buffer,
+                                        extra_left_clip,
+                                        extra_right_clip,
+                                    );
+                                }
+                                SceneCommand::RoundedRectangle { rectangle_index } => {
+                                    let rr = &scene.vectors.rounded_rectangles
+                                        [rectangle_index as usize];
+                                    draw_functions::draw_rounded_rectangle_line(
+                                        &PhysicalRect { origin: span.pos, size: span.size },
+                                        scene.current_line,
+                                        rr,
+                                        range_buffer,
+                                        extra_left_clip,
+                                        extra_right_clip,
+                                    );
+                                }
+                                SceneCommand::LinearGradient { linear_gradient_index } => {
+                                    let g = &scene.vectors.linear_gradients
+                                        [linear_gradient_index as usize];
+
+                                    draw_functions::draw_linear_gradient(
+                                        &PhysicalRect { origin: span.pos, size: span.size },
+                                        scene.current_line,
+                                        g,
+                                        range_buffer,
+                                        extra_left_clip,
+                                    );
+                                }
+                                SceneCommand::RadialGradient { radial_gradient_index } => {
+                                    let g = &scene.vectors.radial_gradients
+                                        [radial_gradient_index as usize];
+                                    draw_functions::draw_radial_gradient(
+                                        &PhysicalRect { origin: span.pos, size: span.size },
+                                        scene.current_line,
+                                        g,
+                                        range_buffer,
+                                        extra_left_clip,
+                                        extra_right_clip,
+                                    );
+                                }
+                                SceneCommand::ConicGradient { conic_gradient_index } => {
+                                    let g = &scene.vectors.conic_gradients
+                                        [conic_gradient_index as usize];
+                                    draw_functions::draw_conic_gradient(
+                                        &PhysicalRect { origin: span.pos, size: span.size },
+                                        scene.current_line,
+                                        g,
+                                        range_buffer,
+                                        extra_left_clip,
+                                        extra_right_clip,
+                                    );
+                                }
+                            }
+                        }
+                    },
+                )
+                .await;
         }
 
         if scene.current_line < to_draw_tr.origin.y_length() + to_draw_tr.size.height_length() {

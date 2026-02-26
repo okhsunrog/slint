@@ -47,11 +47,12 @@ impl MinimalSoftwareWindow {
         }
     }
 
-    #[cfg(feature = "experimental")]
+    /// Async variant of [`Self::draw_if_needed`].
+    ///
     /// If the window needs to be redrawn, the callback will be called with the
     /// [renderer](SoftwareRenderer) that should be used to do the drawing.
     ///
-    /// [`SoftwareRenderer::render()`] or [`SoftwareRenderer::render_by_line()`] should be called
+    /// [`SoftwareRenderer::render_by_line_async()`] should be called
     /// in that callback.
     ///
     /// Return true if something was redrawn.
