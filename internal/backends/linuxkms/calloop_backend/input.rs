@@ -265,6 +265,60 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                             };
                             window.try_dispatch_event(event).map_err(Self::Error::other)?;
                         }
+                        input::event::PointerEvent::ScrollWheel(scroll_event) => {
+                            use input::event::pointer::{Axis, PointerScrollEvent, PointerScrollWheelEvent};
+                            let mouse_pos = self.mouse_pos.as_ref().get().unwrap_or_default();
+                            let delta_x = if scroll_event.has_axis(Axis::Horizontal) {
+                                scroll_event.scroll_value_v120(Axis::Horizontal) as f32 / 120.0 * 20.0
+                            } else { 0.0 };
+                            let delta_y = if scroll_event.has_axis(Axis::Vertical) {
+                                scroll_event.scroll_value_v120(Axis::Vertical) as f32 / 120.0 * 20.0
+                            } else { 0.0 };
+                            if delta_x != 0.0 || delta_y != 0.0 {
+                                let event = WindowEvent::PointerScrolled {
+                                    position: mouse_pos,
+                                    delta_x,
+                                    delta_y,
+                                };
+                                window.try_dispatch_event(event).map_err(Self::Error::other)?;
+                            }
+                        }
+                        input::event::PointerEvent::ScrollFinger(scroll_event) => {
+                            use input::event::pointer::{Axis, PointerScrollEvent};
+                            let mouse_pos = self.mouse_pos.as_ref().get().unwrap_or_default();
+                            let delta_x = if scroll_event.has_axis(Axis::Horizontal) {
+                                scroll_event.scroll_value(Axis::Horizontal) as f32
+                            } else { 0.0 };
+                            let delta_y = if scroll_event.has_axis(Axis::Vertical) {
+                                scroll_event.scroll_value(Axis::Vertical) as f32
+                            } else { 0.0 };
+                            if delta_x != 0.0 || delta_y != 0.0 {
+                                let event = WindowEvent::PointerScrolled {
+                                    position: mouse_pos,
+                                    delta_x,
+                                    delta_y,
+                                };
+                                window.try_dispatch_event(event).map_err(Self::Error::other)?;
+                            }
+                        }
+                        input::event::PointerEvent::ScrollContinuous(scroll_event) => {
+                            use input::event::pointer::{Axis, PointerScrollEvent};
+                            let mouse_pos = self.mouse_pos.as_ref().get().unwrap_or_default();
+                            let delta_x = if scroll_event.has_axis(Axis::Horizontal) {
+                                scroll_event.scroll_value(Axis::Horizontal) as f32
+                            } else { 0.0 };
+                            let delta_y = if scroll_event.has_axis(Axis::Vertical) {
+                                scroll_event.scroll_value(Axis::Vertical) as f32
+                            } else { 0.0 };
+                            if delta_x != 0.0 || delta_y != 0.0 {
+                                let event = WindowEvent::PointerScrolled {
+                                    position: mouse_pos,
+                                    delta_x,
+                                    delta_y,
+                                };
+                                window.try_dispatch_event(event).map_err(Self::Error::other)?;
+                            }
+                        }
                         _ => {}
                     }
                 }
