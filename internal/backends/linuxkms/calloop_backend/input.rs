@@ -446,6 +446,24 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                         window.try_dispatch_event(event).map_err(Self::Error::other)?;
                     }
                 }
+                input::Event::Device(input::event::DeviceEvent::Added(added_event)) => {
+                    // Configure freshly-added pointer devices. On compositor-based
+                    // backends the desktop environment applies the user's accel
+                    // profile, tap-to-click preference, etc. — on bare linuxkms
+                    // there is no compositor, so we have to do it ourselves or
+                    // touchpads feel jittery ("too sensitive, hard to move it")
+                    // and tap-to-click is silently disabled. Ignore errors: these
+                    // setters return Unsupported on devices where the option
+                    // doesn't apply, which is fine.
+                    use input::event::EventTrait;
+                    let mut device = added_event.device();
+                    let _ = device.config_accel_set_profile(input::AccelProfile::Adaptive);
+                    // -0.3 is noticeably calmer than libinput's 0.0 default on
+                    // high-resolution laptop touchpads (Elan, Synaptics) while
+                    // staying fast enough for desktop use.
+                    let _ = device.config_accel_set_speed(-0.3);
+                    let _ = device.config_tap_set_enabled(true);
+                }
                 _ => {}
             }
             //println!("Got event: {:?}", event);
