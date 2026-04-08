@@ -267,7 +267,18 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                         }
                         input::event::PointerEvent::ScrollWheel(scroll_event) => {
                             use input::event::pointer::{Axis, PointerScrollEvent, PointerScrollWheelEvent};
-                            let mouse_pos = self.mouse_pos.as_ref().get().unwrap_or_default();
+                            // Fall back to screen center, not (0, 0), when the user
+                            // hasn't generated a Motion event yet (e.g. the very first
+                            // interaction is a two-finger scroll on a touchpad). A
+                            // (0, 0) position dispatches scroll events to whatever
+                            // sits in the top-left corner instead of the element the
+                            // user is actually looking at.
+                            let mouse_pos = self.mouse_pos.as_ref().get().unwrap_or(
+                                LogicalPosition {
+                                    x: screen_size.width / 2.,
+                                    y: screen_size.height / 2.,
+                                },
+                            );
                             let delta_x = if scroll_event.has_axis(Axis::Horizontal) {
                                 scroll_event.scroll_value_v120(Axis::Horizontal) as f32 / 120.0 * 20.0
                             } else { 0.0 };
@@ -285,7 +296,12 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                         }
                         input::event::PointerEvent::ScrollFinger(scroll_event) => {
                             use input::event::pointer::{Axis, PointerScrollEvent};
-                            let mouse_pos = self.mouse_pos.as_ref().get().unwrap_or_default();
+                            let mouse_pos = self.mouse_pos.as_ref().get().unwrap_or(
+                                LogicalPosition {
+                                    x: screen_size.width / 2.,
+                                    y: screen_size.height / 2.,
+                                },
+                            );
                             let delta_x = if scroll_event.has_axis(Axis::Horizontal) {
                                 scroll_event.scroll_value(Axis::Horizontal) as f32
                             } else { 0.0 };
@@ -303,7 +319,12 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                         }
                         input::event::PointerEvent::ScrollContinuous(scroll_event) => {
                             use input::event::pointer::{Axis, PointerScrollEvent};
-                            let mouse_pos = self.mouse_pos.as_ref().get().unwrap_or_default();
+                            let mouse_pos = self.mouse_pos.as_ref().get().unwrap_or(
+                                LogicalPosition {
+                                    x: screen_size.width / 2.,
+                                    y: screen_size.height / 2.,
+                                },
+                            );
                             let delta_x = if scroll_event.has_axis(Axis::Horizontal) {
                                 scroll_event.scroll_value(Axis::Horizontal) as f32
                             } else { 0.0 };
