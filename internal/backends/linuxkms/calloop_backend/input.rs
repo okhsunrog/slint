@@ -30,6 +30,8 @@ use xkbcommon::*;
 
 use crate::fullscreenwindowadapter::FullscreenWindowAdapter;
 
+const WHEEL_SCROLL_LINES_TO_PIXELS: f32 = 60.0;
+
 #[cfg(feature = "libseat")]
 struct SeatWrap {
     seat: Rc<RefCell<libseat::Seat>>,
@@ -267,25 +269,30 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                             window.try_dispatch_event(event).map_err(Self::Error::other)?;
                         }
                         input::event::PointerEvent::ScrollWheel(scroll_event) => {
-                            use input::event::pointer::{Axis, PointerScrollEvent, PointerScrollWheelEvent};
+                            use input::event::pointer::{Axis, PointerScrollEvent};
                             // Fall back to screen center, not (0, 0), when the user
                             // hasn't generated a Motion event yet (e.g. the very first
                             // interaction is a two-finger scroll on a touchpad). A
                             // (0, 0) position dispatches scroll events to whatever
                             // sits in the top-left corner instead of the element the
                             // user is actually looking at.
-                            let mouse_pos = self.mouse_pos.as_ref().get().unwrap_or(
-                                LogicalPosition {
+                            let mouse_pos =
+                                self.mouse_pos.as_ref().get().unwrap_or(LogicalPosition {
                                     x: screen_size.width / 2.,
                                     y: screen_size.height / 2.,
-                                },
-                            );
+                                });
                             let delta_x = if scroll_event.has_axis(Axis::Horizontal) {
-                                scroll_event.scroll_value_v120(Axis::Horizontal) as f32 / 120.0 * 20.0
-                            } else { 0.0 };
+                                scroll_event.scroll_value_v120(Axis::Horizontal) as f32 / 120.0
+                                    * WHEEL_SCROLL_LINES_TO_PIXELS
+                            } else {
+                                0.0
+                            };
                             let delta_y = if scroll_event.has_axis(Axis::Vertical) {
-                                scroll_event.scroll_value_v120(Axis::Vertical) as f32 / 120.0 * 20.0
-                            } else { 0.0 };
+                                scroll_event.scroll_value_v120(Axis::Vertical) as f32 / 120.0
+                                    * WHEEL_SCROLL_LINES_TO_PIXELS
+                            } else {
+                                0.0
+                            };
                             if delta_x != 0.0 || delta_y != 0.0 {
                                 let event = WindowEvent::PointerScrolled {
                                     position: mouse_pos,
@@ -297,18 +304,21 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                         }
                         input::event::PointerEvent::ScrollFinger(scroll_event) => {
                             use input::event::pointer::{Axis, PointerScrollEvent};
-                            let mouse_pos = self.mouse_pos.as_ref().get().unwrap_or(
-                                LogicalPosition {
+                            let mouse_pos =
+                                self.mouse_pos.as_ref().get().unwrap_or(LogicalPosition {
                                     x: screen_size.width / 2.,
                                     y: screen_size.height / 2.,
-                                },
-                            );
+                                });
                             let delta_x = if scroll_event.has_axis(Axis::Horizontal) {
                                 scroll_event.scroll_value(Axis::Horizontal) as f32
-                            } else { 0.0 };
+                            } else {
+                                0.0
+                            };
                             let delta_y = if scroll_event.has_axis(Axis::Vertical) {
                                 scroll_event.scroll_value(Axis::Vertical) as f32
-                            } else { 0.0 };
+                            } else {
+                                0.0
+                            };
                             if delta_x != 0.0 || delta_y != 0.0 {
                                 let event = WindowEvent::PointerScrolled {
                                     position: mouse_pos,
@@ -320,18 +330,21 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                         }
                         input::event::PointerEvent::ScrollContinuous(scroll_event) => {
                             use input::event::pointer::{Axis, PointerScrollEvent};
-                            let mouse_pos = self.mouse_pos.as_ref().get().unwrap_or(
-                                LogicalPosition {
+                            let mouse_pos =
+                                self.mouse_pos.as_ref().get().unwrap_or(LogicalPosition {
                                     x: screen_size.width / 2.,
                                     y: screen_size.height / 2.,
-                                },
-                            );
+                                });
                             let delta_x = if scroll_event.has_axis(Axis::Horizontal) {
                                 scroll_event.scroll_value(Axis::Horizontal) as f32
-                            } else { 0.0 };
+                            } else {
+                                0.0
+                            };
                             let delta_y = if scroll_event.has_axis(Axis::Vertical) {
                                 scroll_event.scroll_value(Axis::Vertical) as f32
-                            } else { 0.0 };
+                            } else {
+                                0.0
+                            };
                             if delta_x != 0.0 || delta_y != 0.0 {
                                 let event = WindowEvent::PointerScrolled {
                                     position: mouse_pos,
@@ -448,22 +461,24 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                     }
                 }
                 input::Event::Device(input::event::DeviceEvent::Added(added_event)) => {
-                    // Configure freshly-added pointer devices. On compositor-based
+                    // Configure freshly-added touchpads. On compositor-based
                     // backends the desktop environment applies the user's accel
                     // profile, tap-to-click preference, etc. — on bare linuxkms
                     // there is no compositor, so we have to do it ourselves or
                     // touchpads feel jittery ("too sensitive, hard to move it")
-                    // and tap-to-click is silently disabled. Ignore errors: these
-                    // setters return Unsupported on devices where the option
-                    // doesn't apply, which is fine.
+                    // and tap-to-click is silently disabled.
                     use input::event::EventTrait;
                     let mut device = added_event.device();
-                    let _ = device.config_accel_set_profile(input::AccelProfile::Adaptive);
-                    // -0.3 is noticeably calmer than libinput's 0.0 default on
-                    // high-resolution laptop touchpads (Elan, Synaptics) while
-                    // staying fast enough for desktop use.
-                    let _ = device.config_accel_set_speed(-0.3);
-                    let _ = device.config_tap_set_enabled(true);
+                    if device.config_tap_finger_count() > 0 {
+                        let _ = device.config_tap_set_enabled(true);
+                        if device.config_accel_is_available() {
+                            let _ = device.config_accel_set_profile(input::AccelProfile::Adaptive);
+                            // -0.3 is noticeably calmer than libinput's 0.0 default on
+                            // high-resolution laptop touchpads (Elan, Synaptics) while
+                            // staying fast enough for desktop use.
+                            let _ = device.config_accel_set_speed(-0.3);
+                        }
+                    }
                 }
                 _ => {}
             }
