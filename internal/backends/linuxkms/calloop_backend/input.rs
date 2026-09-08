@@ -299,7 +299,9 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                                     delta_x,
                                     delta_y,
                                 };
-                                window.try_dispatch_event(event).map_err(Self::Error::other)?;
+                                window
+                                    .dispatch_event_with_result(event)
+                                    .map_err(Self::Error::other)?;
                             }
                         }
                         input::event::PointerEvent::ScrollFinger(scroll_event) => {
@@ -325,7 +327,9 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                                     delta_x,
                                     delta_y,
                                 };
-                                window.try_dispatch_event(event).map_err(Self::Error::other)?;
+                                window
+                                    .dispatch_event_with_result(event)
+                                    .map_err(Self::Error::other)?;
                             }
                         }
                         input::event::PointerEvent::ScrollContinuous(scroll_event) => {
@@ -351,7 +355,9 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                                     delta_x,
                                     delta_y,
                                 };
-                                window.try_dispatch_event(event).map_err(Self::Error::other)?;
+                                window
+                                    .dispatch_event_with_result(event)
+                                    .map_err(Self::Error::other)?;
                             }
                         }
                         _ => {}
@@ -461,23 +467,21 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                     }
                 }
                 input::Event::Device(input::event::DeviceEvent::Added(added_event)) => {
-                    // Configure freshly-added touchpads. On compositor-based
-                    // backends the desktop environment applies the user's accel
-                    // profile, tap-to-click preference, etc. — on bare linuxkms
-                    // there is no compositor, so we have to do it ourselves or
-                    // touchpads feel jittery ("too sensitive, hard to move it")
-                    // and tap-to-click is silently disabled.
+                    // There is no compositor to configure input devices on KMS.
                     use input::event::EventTrait;
                     let mut device = added_event.device();
                     if device.config_tap_finger_count() > 0 {
                         let _ = device.config_tap_set_enabled(true);
-                        if device.config_accel_is_available() {
-                            let _ = device.config_accel_set_profile(input::AccelProfile::Adaptive);
-                            // -0.3 is noticeably calmer than libinput's 0.0 default on
-                            // high-resolution laptop touchpads (Elan, Synaptics) while
-                            // staying fast enough for desktop use.
-                            let _ = device.config_accel_set_speed(-0.3);
-                        }
+                    }
+                    if device.config_accel_is_available() {
+                        let _ = device.config_accel_set_profile(input::AccelProfile::Adaptive);
+                        // Keep libinput's neutral default unless explicitly configured.
+                        let speed = std::env::var("SLINT_LIBINPUT_ACCEL_SPEED")
+                            .ok()
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .filter(|speed| (-1.0..=1.0).contains(speed))
+                            .unwrap_or(0.0);
+                        let _ = device.config_accel_set_speed(speed);
                     }
                 }
                 _ => {}
