@@ -26,6 +26,9 @@ use crate::fullscreenwindowadapter::FullscreenWindowAdapter;
 ))]
 mod input;
 
+#[cfg(all(feature = "libinput", not(feature = "libseat")))]
+mod console;
+
 #[derive(Clone)]
 struct Proxy {
     loop_signal: Arc<Mutex<Option<calloop::LoopSignal>>>,
@@ -224,6 +227,12 @@ impl i_slint_core::platform::Platform for Backend {
     }
 
     fn run_event_loop(&self) -> Result<(), PlatformError> {
+        // Direct evdev access does not stop the kernel from also feeding the VT.
+        // Keep GUI input out of the console and the shell that launched us.
+        #[cfg(all(feature = "libinput", not(feature = "libseat")))]
+        let _console = console::ConsoleKeyboard::acquire()
+            .map_err(|e| format!("Cannot isolate console keyboard input: {e}"))?;
+
         let mut event_loop: EventLoop<LoopData> =
             EventLoop::try_new().map_err(|e| format!("Error creating event loop: {}", e))?;
 

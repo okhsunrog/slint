@@ -168,6 +168,20 @@ Set `SLINT_DRM_MODE` to `4` to select 1920x1080@60.
 
 ## Configuring the Keyboard
 
+Without libseat, Slint disables keyboard translation on the active Linux virtual
+console while the event loop runs. It flushes queued console input before restoring
+the previous keyboard mode on return, so GUI input is not passed to a waiting shell.
+Initialization fails if an existing virtual console cannot be protected.
+
+## Configuring the Pointer
+
+Slint enables tap-to-click on touchpads and uses libinput's adaptive acceleration
+with its neutral speed of `0.0`. Set `SLINT_LIBINPUT_ACCEL_SPEED` to a number between
+`-1.0` (slowest) and `1.0` (fastest) to adjust mice and touchpads. For example,
+`SLINT_LIBINPUT_ACCEL_SPEED=0.3` increases pointer speed. Invalid values use `0.0`.
+
+## Keyboard Layout
+
 By default the keyboard layout and model is assumed to be a US model and layout. Set the following
 environment variables to configure support for different keyboards:
 
