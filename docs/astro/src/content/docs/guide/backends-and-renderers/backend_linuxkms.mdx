@@ -173,6 +173,15 @@ Index: 5 Width: 1680 Height: 1050 Refresh Rate: 59
 
 Set `SLINT_DRM_MODE` to `4` to select 1920x1080@60.
 
+## Configuring the Pointer
+
+The backend preserves libinput's device defaults, including the acceleration profile and tap-to-click setting.
+Set `SLINT_LIBINPUT_ACCEL_SPEED` to a number from `-1.0` to `1.0` to override pointer acceleration speed.
+For example, `SLINT_LIBINPUT_ACCEL_SPEED=0.3` increases speed; `0.0` is neutral.
+Set `SLINT_LIBINPUT_TAP_TO_CLICK=1` to enable tapping on touchpads, or `0` to disable it.
+Unset or invalid values leave the corresponding device setting unchanged.
+These settings are read when the event loop starts and also apply to devices connected later.
+
 ## Configuring the Keyboard
 
 By default the keyboard layout and model is assumed to be a US model and layout. Set the following

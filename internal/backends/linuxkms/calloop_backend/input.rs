@@ -128,6 +128,7 @@ pub struct LibInputHandler<'a> {
     window: &'a RefCell<Option<Rc<FullscreenWindowAdapter>>>,
     keystate: Option<xkb::State>,
     libinput_event_hook: &'a Option<Box<dyn Fn(&::input::Event) -> bool>>,
+    pointer_config: PointerConfig,
 }
 
 impl<'a> LibInputHandler<'a> {
@@ -152,6 +153,7 @@ impl<'a> LibInputHandler<'a> {
             window,
             keystate: Default::default(),
             libinput_event_hook,
+            pointer_config: PointerConfig::from_env(),
         };
 
         event_loop_handle
@@ -183,6 +185,50 @@ fn take_touch_pos(
         .find(|(s, _)| *s == slot)
         .and_then(|entry| entry.1.take())
         .unwrap_or_default()
+}
+
+#[derive(Default)]
+struct PointerConfig {
+    accel_speed: Option<f64>,
+    tap_to_click: Option<bool>,
+}
+
+impl PointerConfig {
+    fn from_env() -> Self {
+        Self {
+            accel_speed: std::env::var("SLINT_LIBINPUT_ACCEL_SPEED")
+                .ok()
+                .as_deref()
+                .and_then(parse_accel_speed),
+            tap_to_click: std::env::var("SLINT_LIBINPUT_TAP_TO_CLICK").ok().as_deref().and_then(
+                |value| match value {
+                    "1" => Some(true),
+                    "0" => Some(false),
+                    _ => None,
+                },
+            ),
+        }
+    }
+
+    fn apply(&self, device: &mut input::Device) {
+        // Leave libinput defaults and application hook settings intact unless overridden.
+        if let Some(enabled) = self.tap_to_click
+            && device.config_tap_finger_count() > 0
+            && let Err(error) = device.config_tap_set_enabled(enabled)
+        {
+            eprintln!("Could not configure tap-to-click on {}: {error:?}", device.name());
+        }
+        if let Some(speed) = self.accel_speed
+            && device.config_accel_is_available()
+            && let Err(error) = device.config_accel_set_speed(speed)
+        {
+            eprintln!("Could not configure pointer speed on {}: {error:?}", device.name());
+        }
+    }
+}
+
+fn parse_accel_speed(value: &str) -> Option<f64> {
+    value.parse().ok().filter(|speed| (-1.0..=1.0).contains(speed))
 }
 
 // Match the wheel step used by the winit backend.
@@ -261,12 +307,11 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
             };
             match event {
                 input::Event::Pointer(pointer_event) => {
-                    if let Some((dx, dy, factor)) = pointer_scroll_delta(&pointer_event) {
-                        if let Some(event) =
+                    if let Some((dx, dy, factor)) = pointer_scroll_delta(&pointer_event)
+                        && let Some(event) =
                             scroll_event(self.mouse_pos.as_ref().get(), screen_size, dx, dy, factor)
-                        {
-                            window.dispatch_event_with_result(event).map_err(Self::Error::other)?;
-                        }
+                    {
+                        window.dispatch_event_with_result(event).map_err(Self::Error::other)?;
                     }
                     match pointer_event {
                         input::event::PointerEvent::Motion(motion_event) => {
@@ -318,6 +363,10 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                         }
                         _ => {}
                     }
+                }
+                input::Event::Device(input::event::DeviceEvent::Added(event)) => {
+                    use input::event::EventTrait;
+                    self.pointer_config.apply(&mut event.device());
                 }
                 input::Event::Touch(touch_event) => match touch_event {
                     input::event::TouchEvent::Down(touch_down_event) => {
@@ -482,6 +531,16 @@ fn map_key_sym(sym: xkb::Keysym) -> Option<SharedString> {
 #[cfg(test)]
 mod scroll_tests {
     use super::*;
+
+    #[test]
+    fn pointer_speed_rejects_non_finite_and_out_of_range_values() {
+        for value in ["NaN", "inf", "-inf", "1.01", "-1.01", "", "fast"] {
+            assert_eq!(parse_accel_speed(value), None, "{value}");
+        }
+        for (value, speed) in [("-1", -1.), ("0", 0.), ("0.3", 0.3), ("1", 1.)] {
+            assert_eq!(parse_accel_speed(value), Some(speed));
+        }
+    }
 
     #[test]
     fn scroll_direction_and_high_resolution_steps_match_content_displacement() {
