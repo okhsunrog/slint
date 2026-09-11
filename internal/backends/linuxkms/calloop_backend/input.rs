@@ -259,13 +259,22 @@ fn scroll_event(
 fn pointer_scroll_delta(event: &input::event::PointerEvent) -> Option<(f64, f64, f64)> {
     use input::event::PointerEvent;
     use input::event::pointer::{Axis, PointerScrollEvent};
+    // A scroll event carries only the axes that moved; a wheel usually has
+    // one. Reading the other makes libinput log a client bug for every event.
+    fn axis(event: &impl PointerScrollEvent, axis: Axis, read: impl FnOnce() -> f64) -> f64 {
+        if event.has_axis(axis) { read() } else { 0.0 }
+    }
     fn continuous(event: &impl PointerScrollEvent) -> (f64, f64, f64) {
-        (event.scroll_value(Axis::Horizontal), event.scroll_value(Axis::Vertical), 1.0)
+        (
+            axis(event, Axis::Horizontal, || event.scroll_value(Axis::Horizontal)),
+            axis(event, Axis::Vertical, || event.scroll_value(Axis::Vertical)),
+            1.0,
+        )
     }
     Some(match event {
         PointerEvent::ScrollWheel(event) => (
-            event.scroll_value_v120(Axis::Horizontal),
-            event.scroll_value_v120(Axis::Vertical),
+            axis(event, Axis::Horizontal, || event.scroll_value_v120(Axis::Horizontal)),
+            axis(event, Axis::Vertical, || event.scroll_value_v120(Axis::Vertical)),
             WHEEL_SCROLL_PIXELS / 120.0,
         ),
         PointerEvent::ScrollFinger(event) => continuous(event),
