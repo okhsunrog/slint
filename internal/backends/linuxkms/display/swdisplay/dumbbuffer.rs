@@ -79,11 +79,26 @@ impl super::SoftwareBufferDisplay for DumbBufferDisplay {
         let mut back_buffer = self.back_buffer.borrow_mut();
         let age = back_buffer.age;
         let format = back_buffer.format;
+        // The mapping covers the buffer's allocation, which the kernel rounds
+        // up to whole pages. The renderers derive the row pitch from the
+        // slice length divided by the height, so hand them exactly
+        // pitch × height bytes. Otherwise a 1912×1021 XRGB8888 buffer (7648
+        // byte pitch, 7811072 bytes mapped) would yield a 7650 byte "pitch",
+        // which Skia rejects as not a whole number of pixels.
+        let frame_len = {
+            use drm::buffer::Buffer;
+            let buffer = &back_buffer.buffer_handle;
+            buffer.pitch() as usize * buffer.size().1 as usize
+        };
         self.drm_output
             .drm_device
             .map_dumb_buffer(&mut back_buffer.buffer_handle)
             .map_err(|e| PlatformError::Other(format!("Error mapping dumb buffer: {e}")))
-            .and_then(|mut buffer| callback(buffer.as_mut(), age, format))
+            .and_then(|mut buffer| {
+                let pixels = buffer.as_mut();
+                let frame_len = frame_len.min(pixels.len());
+                callback(&mut pixels[..frame_len], age, format)
+            })
     }
 
     fn is_write_combined_memory(&self) -> bool {
