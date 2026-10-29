@@ -1245,6 +1245,7 @@ impl Item for TextInput {
                         self.select_all(window_adapter, self_rc);
                     }
                 }
+                WindowInner::from_pub(window_adapter.window()).track_text_input_position(self_rc);
             }
             FocusEvent::FocusOut(reason) => {
                 self.has_focus.set(false);
