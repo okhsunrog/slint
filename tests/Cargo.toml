@@ -19,6 +19,7 @@ members = [
   'driver/rust',
   'screenshots',
   'backends',
+  'no_std_metrics',
   'manual/windowattributes',
   'manual/module-builds/blogica',
   'manual/module-builds/blogicb',

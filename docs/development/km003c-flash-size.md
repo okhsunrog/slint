@@ -161,3 +161,70 @@ Existing tests also cover read-only input, focus switching, visibility, scrollin
 Rust formatting and `git diff --check` pass.
 The modified firmware links on stable with the original FLASH budget, and symbol inspection confirms the unwanted TextInput dependency disappears.
 No device flashing, screenshot comparison, C++ test suite, or full repository test suite was performed.
+
+## Follow-Up: Disabled Metrics, November 7, 2026
+
+The next pass starts from the published `a9a9a222e3c6c768eb4294e04e8a35e9292ccdd1` branch head.
+Firmware `slint-ui` is now `baebbf4a18d4369e8debfb3799ce9c8b734e8a7b`; its changes since `702ea45` only affect documentation and hardware logs.
+Rust remains pinned to 1.99.1, and the firmware dependency lockfile before local patches is unchanged.
+A fresh build reproduces the previous 375,680-byte extent exactly.
+
+The binary still contained `RenderingMetricsCollector::ensure_reporting` and its timer callback, despite `SLINT_DEBUG_PERFORMANCE` being absent.
+`RenderingMetrics::fmt` formats the dirty region, whose floating-point coordinates retain Rust's float-to-decimal implementation.
+The collector constructor already returns `None` for this configuration, but that fact does not eliminate every retained call path.
+
+Share the embedded compile-time options between construction and `measure_frame_rendered`.
+Return immediately from measurement when the embedded options are absent.
+This preserves the constructor's existing contract and makes the unreachable measurement code removable locally.
+The `std` implementation is unchanged; explicitly enabled embedded metrics still execute the original reporting path.
+No precision changes, panic-handler changes, feature removals, or additional runtime allocations are introduced.
+
+| Metric | Previous Fix | With Metrics Fix |
+| --- | ---: | ---: |
+| `.text` | 295,556 | 278,840 |
+| `.rodata` | 76,256 | 72,584 |
+| `.data` | 780 | 764 |
+| `.bss` | 58,904 | 58,904 |
+| Flash section bytes | 375,228 | 354,824 |
+| Flash linker extent | 375,680 | 355,264 |
+| Remaining flash budget | 83,070 | 103,486 |
+
+The additional saving is 20,404 section bytes, or 20,416 bytes of linker extent.
+Symbol inspection confirms that metrics reporting and `float_to_decimal_common_exact` / `float_to_decimal_common_shortest` disappear.
+Double-precision arithmetic helpers remain: numeric formatting and arithmetic are separate costs.
+
+### Regression Test
+
+The dedicated `test-no-std-metrics` package renders a 16-by-16 red RGB565 frame through `MinimalSoftwareWindow`.
+It checks every pixel, advances a simulated clock, and captures the platform's diagnostic messages.
+Both invocations pass:
+
+```sh
+# Run separately to avoid feature unification with desktop test packages.
+env -u SLINT_DEBUG_PERFORMANCE cargo test --locked --manifest-path tests/Cargo.toml -p test-no-std-metrics
+SLINT_DEBUG_PERFORMANCE=refresh_lazy,console cargo test --locked --manifest-path tests/Cargo.toml -p test-no-std-metrics
+```
+
+The first run verifies that no FPS report appears.
+The second verifies the FPS report and the last frame's dirty-region details.
+The normal dependency feature tree confirms that `slint/std` and `i-slint-core/std` are disabled for this package.
+The firmware release build also links under its original flash limit.
+Hardware timing, the full repository test suite, and device flashing were not performed.
+
+### Additional Stable LLVM Experiments
+
+These results include the metrics fix and retain the default `z`, fat LTO, and one codegen unit.
+Two additional machine-outliner passes reduce extent from 355,264 to 354,912 bytes, saving another 352 bytes.
+Five additional passes produce the same size.
+Combining two outliner passes with `target-cpu=cortex-m4` produces 354,560 bytes (104,190 bytes spare).
+Explicitly enabling LLVM's merge-functions pass produces the same 355,264-byte extent as the default.
+
+The machine-outliner option is an internal LLVM tuning option rather than a stable Rust interface:
+
+```sh
+RUSTFLAGS='-C link-arg=-Tlink.x -C link-arg=-Tmetadata.x -C llvm-args=-machine-outliner-reruns=2' \
+  cargo +1.99.1 build --release --config /tmp/local-slint.toml
+```
+
+Additional outlining can alter call overhead and stack behavior, so it needs device timing checks before adoption in the PD firmware.
+The source fix provides nearly all the demonstrated gain without these tuning options.
