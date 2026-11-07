@@ -380,7 +380,8 @@ The existing Cargo requirement `usbpd = "2.0.0"` does not select 3.x through a r
 
 Prefer evaluating that upstream migration before extending the historical local uom experiment below.
 The PR reports elimination of double and num-rational symbols in its USB PD example; that is not a measurement of this Slint firmware.
-The updated dependency has not been built or measured in this investigation, and Slint's independent libm callers may still retain double helpers.
+The subsequent migration measurement below tests the updated dependency in this firmware.
+Slint's independent libm callers can still retain double helpers.
 
 The callers of `Ratio<u32>::from_f64` resolve to USB PD policy-engine and power-supply conversion functions.
 For example, `usbpd` 2.0.0 `FixedSupply::voltage` constructs an `ElectricPotential` with `_50millivolts`.
@@ -418,3 +419,34 @@ The firmware lockfile was restored after the experiment; no firmware or external
 The larger remaining opportunities are eliminating unused math callers and specializing known rational unit coefficients.
 Replacing f64 with f32 globally, or substituting approximate trig functions, requires a different numerical contract and explicit error bounds.
 It is not an equivalent size optimization.
+
+## Firmware Migration to usbpd 3.1.0
+
+The local firmware now uses the GitHub 3.1.0 release at `b1f0bb9720e362039ac5e5a511199c828da26c04`.
+The registry index available during this run contains 3.0.0 but not 3.1.0, so both usbpd and usbpd-traits use that pinned Git revision.
+The direct units dependency is `uom = { package = "uom-ng", version = "0.39.0", default-features = false, features = ["si", "u32"] }`.
+The adapter implements the new `SinkDpm`, `DrpDevicePolicyManager`, and `EprDevicePolicyManager` traits with their defaults.
+The existing voltage requests, 100 mA request, and PHY callbacks are unchanged; the library's default EPR feature stays enabled.
+No firmware changes were pushed.
+
+With this Slint branch, fixed scale 1, and the same release profile, the image links:
+
+| Measurement | usbpd 2.0.0 | usbpd 3.1.0 |
+| --- | ---: | ---: |
+| `.text` | 278,784 | 284,576 |
+| `.rodata` | 64,552 | 65,068 |
+| `.data` | 764 | 764 |
+| `.bss` | 58,904 | 59,896 |
+| Flash extent | 347,168 | 353,472 |
+| Remaining budget | 111,582 | 105,278 |
+
+This complete version upgrade increases extent by 6,304 bytes and static RAM by 992 bytes.
+It is not an isolated comparison of unit conversion implementations.
+The new ELF still contains `Ratio<u32>::from_f64`, with seven direct calls from the USB PD policy engine and fixed-request construction.
+Thus, the symbol-elimination result from the upstream PR's example does not reproduce in this firmware and profile.
+The legacy uom package is absent from the dependency graph; both firmware and usbpd use the same uom-ng package.
+
+A separate build with registry Slint 1.18.1 and the firmware's default scale still fails the original flash limit by 7,874 bytes.
+The ordinary firmware lockfile retains registry Slint; the successful measurement uses the local Slint patch configuration described above.
+The migration patch contains only the firmware manifest, lockfile, and PD adapter changes.
+Device negotiation, GoodCRC timing, and recovery behavior require hardware validation after this stack upgrade.
