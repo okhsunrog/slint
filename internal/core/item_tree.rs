@@ -19,6 +19,18 @@ use core::ops::ControlFlow;
 use core::pin::Pin;
 use vtable::*;
 
+// Registering these operations from Flickable::init keeps generic focus traversal
+// from retaining the Flickable vtable in applications without scrollable items.
+pub(crate) struct FlickableFunctions {
+    pub is_flickable: fn(&ItemRc) -> bool,
+    pub reveal: fn(&ItemRc, &ItemRc),
+}
+
+crate::thread_local! {
+    pub(crate) static FLICKABLE_FUNCTIONS: core::cell::Cell<Option<&'static FlickableFunctions>>
+        = const { core::cell::Cell::new(None) };
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 /// A range of indices
@@ -453,8 +465,9 @@ impl ItemRc {
                     && clip.min.x <= geometry.max.x
                     && clip.min.y <= geometry.max.y;
                 if !item_in_clip {
-                    return ancestor.downcast::<crate::items::Flickable>().is_some()
-                        && ancestor.is_visible_or_clipped_by_flickable();
+                    return FLICKABLE_FUNCTIONS.with(|functions| {
+                        functions.get().is_some_and(|f| (f.is_flickable)(&ancestor))
+                    }) && ancestor.is_visible_or_clipped_by_flickable();
                 }
             }
             parent = ancestor.parent_item(ParentItemTraversalMode::StopAtPopups);
@@ -692,7 +705,7 @@ impl ItemRc {
     /// Returns an absolute position of `p` in the `ancestor`'s coordinate system
     /// (does not add this item's x and y)
     /// Don't rely on any specific behavior if `self` isn't a descendant of `ancestor`.
-    fn map_to_ancestor(&self, p: LogicalPoint, ancestor: &Self) -> LogicalPoint {
+    pub(crate) fn map_to_ancestor(&self, p: LogicalPoint, ancestor: &Self) -> LogicalPoint {
         self.map_to_item_tree_impl(p, |parent| parent == ancestor)
     }
 
@@ -1057,33 +1070,12 @@ impl ItemRc {
     }
 
     pub(crate) fn try_scroll_into_visible(&self) {
+        let Some(functions) = FLICKABLE_FUNCTIONS.with(|functions| functions.get()) else {
+            return;
+        };
         let mut parent = self.parent_item(ParentItemTraversalMode::StopAtPopups);
         while let Some(item_rc) = parent.as_ref() {
-            let item_ref = item_rc.borrow();
-            if let Some(flickable) = vtable::VRef::downcast_pin::<crate::items::Flickable>(item_ref)
-            {
-                let geo = self.geometry();
-
-                flickable.reveal_points(
-                    item_rc,
-                    &[
-                        self.map_to_ancestor(
-                            LogicalPoint::new(
-                                geo.origin.x - flickable.content_x().0,
-                                geo.origin.y - flickable.content_y().0,
-                            ),
-                            item_rc,
-                        ),
-                        self.map_to_ancestor(
-                            LogicalPoint::new(
-                                geo.max_x() - flickable.content_x().0,
-                                geo.max_y() - flickable.content_y().0,
-                            ),
-                            item_rc,
-                        ),
-                    ],
-                );
-            }
+            (functions.reveal)(item_rc, self);
 
             parent = item_rc.parent_item(ParentItemTraversalMode::StopAtPopups);
         }

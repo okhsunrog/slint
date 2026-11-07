@@ -1,0 +1,64 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+export component PlainWindow inherits Window {
+    width: 100px;
+    height: 100px;
+    scope := FocusScope { }
+    public function take-focus() { scope.focus(); }
+    out property <bool> focused: scope.has-focus;
+}
+
+export component TestCase inherits Window {
+    width: 100px;
+    height: 100px;
+    flick := Flickable {
+        width: 100px;
+        height: 100px;
+        content-height: 400px;
+        scope := FocusScope {
+            y: 300px;
+            width: 20px;
+            height: 20px;
+        }
+    }
+    init => { scope.focus(); }
+    out property <length> offset: flick.content-y;
+    out property <bool> focused: scope.has-focus;
+}
+
+/*
+```rust
+// Generic focus traversal runs before the thread's first Flickable is initialized.
+let plain = PlainWindow::new().unwrap();
+plain.invoke_take_focus();
+assert!(plain.get_focused());
+
+// Registration must precede user init, and must not retain a destroyed item tree.
+for _ in 0..3 {
+    let scrolled = TestCase::new().unwrap();
+    assert!(scrolled.get_focused());
+    assert_eq!(scrolled.get_offset(), -220.);
+    let weak = slint::ComponentHandle::as_weak(&scrolled);
+    drop(scrolled);
+    assert!(weak.upgrade().is_none());
+    plain.invoke_take_focus();
+    assert!(plain.get_focused());
+}
+```
+
+```cpp
+auto plain = PlainWindow::create();
+plain->invoke_take_focus();
+assert(plain->get_focused());
+for (int i = 0; i < 3; ++i) {
+    {
+        auto scrolled = TestCase::create();
+        assert(scrolled->get_focused());
+        assert_eq(scrolled->get_offset(), -220.);
+    }
+    plain->invoke_take_focus();
+    assert(plain->get_focused());
+}
+```
+*/

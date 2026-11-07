@@ -77,6 +77,12 @@ pub struct Flickable {
 
 impl Item for Flickable {
     fn init(self: Pin<&Self>, self_rc: &ItemRc) {
+        crate::item_tree::FLICKABLE_FUNCTIONS.with(|functions| {
+            functions.set(Some(&crate::item_tree::FlickableFunctions {
+                is_flickable: |item| item.downcast::<Flickable>().is_some(),
+                reveal: Flickable::reveal_item,
+            }));
+        });
         self.data.in_bound_change_handler.init_delayed(
             self_rc.downgrade(),
             // Binding that returns if the Flickable is out of bounds:
@@ -306,6 +312,33 @@ impl Flickable {
         } else {
             tmin
         }
+    }
+
+    fn reveal_item(self_rc: &ItemRc, item: &ItemRc) {
+        let item_ref = self_rc.borrow();
+        let Some(flickable) = vtable::VRef::downcast_pin::<Self>(item_ref) else {
+            return;
+        };
+        let geo = item.geometry();
+        flickable.reveal_points(
+            self_rc,
+            &[
+                item.map_to_ancestor(
+                    LogicalPoint::new(
+                        geo.origin.x - flickable.content_x().0,
+                        geo.origin.y - flickable.content_y().0,
+                    ),
+                    self_rc,
+                ),
+                item.map_to_ancestor(
+                    LogicalPoint::new(
+                        geo.max_x() - flickable.content_x().0,
+                        geo.max_y() - flickable.content_y().0,
+                    ),
+                    self_rc,
+                ),
+            ],
+        );
     }
 
     /// Scroll the Flickable so that all of the points are visible at the same time (if possible).
