@@ -522,3 +522,32 @@ The baseline was built independently; there are no newly failing test names.
 These existing integer-unit test failures must not be reported as a passing full suite.
 The minimal patch and reproduction sources are retained separately; no changes to an external uom-ng repository were published.
 The firmware's ordinary lockfile was restored after the measurement; using the fix requires selecting the patched uom-ng source.
+
+## Native RGB565 Big-Endian Display Path
+
+The local firmware now uses Slint's existing `Rgb565BigEndianPixel` as its line-buffer target.
+Slint renders directly into the eight-row tile, removing a 240-pixel intermediate scanline and its copy loop.
+The display transport keeps the existing rotation mapping and sends each pixel's `.0.to_ne_bytes()`.
+The BE pixel already stores bytes in panel order; applying `to_be_bytes()` again would reverse them on this little-endian MCU.
+
+These measurements use the same optimized Slint, USB PD 3.1.0, constant-reciprocal uom-ng patch, and `SLINT_SCALE_FACTOR=1` as the preceding experiment.
+
+| Firmware Display Path | Native RGB565 With Scanline Copy | Direct RGB565 BE Tile |
+| --- | ---: | ---: |
+| `.text` | 279,192 | 279,056 |
+| `.rodata` | 63,220 | 63,188 |
+| `.data` | 764 | 764 |
+| `.bss` | 59,896 | 59,416 |
+| Flash extent | 346,240 | 346,080 |
+| Remaining budget | 112,510 | 112,670 |
+
+The combined change saves 160 bytes of flash extent and 480 bytes of static RAM.
+The RAM saving comes from removing the scanline, not from BE pixels occupying less memory.
+Both pixel types occupy two bytes.
+These measurements do not isolate the format change from removing the copy.
+
+The ARM release build passes.
+All eight software-renderer unit tests pass, including RGB565 BE conversion and blending.
+All 29 driver tests pass, including the asymmetric-tile test for all four rotations.
+No device timing or visual validation was performed, and the change does not add TE synchronization.
+The firmware patch remains local; only this report was published to the Slint fork.
