@@ -3897,6 +3897,21 @@ fn compile_keys_literal(expr: &Expression) -> TokenStream {
 #[inline(never)]
 fn compile_cast(expr: &Expression, ctx: &EvaluationContext) -> TokenStream {
     let Expression::Cast { from, to } = expr else { unreachable!() };
+    if *to == Type::Int32 {
+        if let Expression::BinaryExpression { lhs, rhs, op: op @ ('+' | '-') } = from.as_ref() {
+            if let (Some(lhs), Some(rhs)) =
+                (compile_exact_i32_operand(lhs, ctx), compile_exact_i32_operand(rhs, ctx))
+            {
+                // i32 sums and differences are exact in f64. Saturation matches
+                // the final float-to-int cast without rounding intermediate expressions.
+                return if *op == '+' {
+                    quote!((#lhs).saturating_add(#rhs))
+                } else {
+                    quote!((#lhs).saturating_sub(#rhs))
+                };
+            }
+        }
+    }
     let f = compile_expression(from, ctx);
     match (from.ty(ctx), to) {
         (Type::Float32, Type::Int32) => {
@@ -3999,6 +4014,26 @@ fn compile_cast(expr: &Expression, ctx: &EvaluationContext) -> TokenStream {
             quote!({#f;})
         }
         _ => f,
+    }
+}
+
+fn compile_exact_i32_operand(expr: &Expression, ctx: &EvaluationContext) -> Option<TokenStream> {
+    match expr {
+        // Numeric promotion to Float32 is representation-preserving in this
+        // generator; compile_cast emits the operand unchanged.
+        Expression::Cast { from, to: Type::Float32 } => compile_exact_i32_operand(from, ctx),
+        Expression::NumberLiteral(value)
+            if value.is_finite() && *value == (*value as i32) as f64 =>
+        {
+            let value = *value as i32;
+            Some(quote!(#value))
+        }
+        Expression::PropertyReference(_) | Expression::FunctionParameterReference { .. }
+            if expr.ty(ctx) == Type::Int32 =>
+        {
+            Some(compile_expression(expr, ctx))
+        }
+        _ => None,
     }
 }
 

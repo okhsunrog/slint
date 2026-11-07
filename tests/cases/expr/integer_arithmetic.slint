@@ -1,0 +1,31 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+export component TestCase {
+    in-out property <int> a;
+    in-out property <int> b;
+    out property <int> sum: a + b;
+    out property <int> difference: a - b;
+    out property <int> toggle: 1 - a;
+    out property <int> cancelled: (a + b) - b;
+    out property <int> fractional: a + 0.5;
+    out property <int> large-literal: 2147483648 - a;
+    out property <bool> test: sum == 0 && difference == 0 && toggle == 1;
+}
+/*
+```rust
+let instance = TestCase::new().unwrap();
+let values = [i32::MIN, i32::MIN + 1, -16777217, -2, -1, 0, 1, 2, 16777217, i32::MAX - 1, i32::MAX];
+for a in values {
+    instance.set_a(a);
+    for b in values {
+        instance.set_b(b);
+        assert_eq!(instance.get_sum(), (a as f64 + b as f64) as i32);
+        assert_eq!(instance.get_difference(), (a as f64 - b as f64) as i32);
+        assert_eq!(instance.get_toggle(), (1.0 - a as f64) as i32);
+        assert_eq!(instance.get_cancelled(), a);
+        assert_eq!(instance.get_fractional(), (a as f64 + 0.5) as i32);
+        assert_eq!(instance.get_large_literal(), (2147483648.0 - a as f64) as i32);
+    }
+}
+```
+*/

@@ -5,7 +5,7 @@ The focus-tracking change reduces flash section bytes by 82,196 on stable Rust.
 The resulting image links with the original flash limit and retains the firmware's panic/recovery handler.
 
 The follow-up sections below record additional measurements.
-With disabled-metrics elimination and fixed-scale font pruning, the latest measured flash extent is 347,264 bytes, leaving 111,486 bytes.
+With disabled-metrics elimination, fixed-scale font pruning, and exact integer arithmetic, the latest Slint-only flash extent is 347,168 bytes, leaving 111,582 bytes.
 Font pruning requires `SLINT_SCALE_FACTOR=1` for this firmware; without a fixed scale, the compiler preserves the fallback size.
 
 ## Revisions and Configuration
@@ -304,3 +304,105 @@ while preserving successful downcasts, pinning, item lifetime safety, and C++ AB
 That work remains unimplemented and unvalidated.
 The measured font change does not modify item dispatch or scrolling.
 Device rendering, stack usage, and PD timing have not been tested on hardware.
+
+## Follow-Up: Arithmetic and Double Precision
+
+The fixed-scale font-pruned baseline contains 4,078 bytes of identified double helper bodies and ABI wrappers.
+This sum deduplicates addresses and includes `__adddf3`, `__muldf3`, and `__divdf3`, not just their small `__aeabi_*` wrappers.
+It excludes callers and libm kernels, so it is not the total cost of double precision.
+
+Disassembly of that baseline identifies these direct call sites into double helpers:
+
+| Caller | Call Sites |
+| --- | ---: |
+| `libm::rem_pio2f` | 44 |
+| `Ratio<u32>::from_f64` | 13 |
+| `libm::k_tanf` | 10 |
+| Animation interpolation | 7 |
+| `libm::k_cosf` | 7 |
+| `libm::k_sinf` | 5 |
+| Generated page key handler | 4 |
+| Spring evaluation | 3 |
+| Children transform | 3 |
+
+These are static call-site counts, including conversions, not execution counts or exclusive byte costs.
+The earlier range-reduction count excluded some conversions.
+The spring source already uses `f32::sin_cos` and `f32::exp`.
+Replacing explicit `f64` types would therefore miss much of the retained double arithmetic.
+The f32 libm kernels use double intermediates for accuracy and range reduction.
+
+### Exact Integer Addition and Subtraction
+
+The Rust generator previously compiled `page = 1 - page` through double conversion, subtraction, and a saturating float-to-i32 cast.
+When an addition or subtraction is immediately cast to i32, the generator now recognizes i32 property/parameter operands and exactly representable i32 literals.
+It emits `saturating_add` or `saturating_sub` instead.
+The full mathematical sum or difference of two i32 values is exact in f64, so saturation preserves the original result.
+
+The optimization deliberately excludes nested arithmetic, fractional or out-of-range literals, multiplication, and division.
+For example, saturating `(a + b)` before evaluating `(a + b) - b` would change overflow cancellation.
+Changing intermediates to f32 would also lose integer precision above 16,777,216.
+Numeric promotion casts are transparent in the existing Rust generator and can be traversed without rounding.
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Flash extent | 347,264 | 347,168 |
+| Remaining budget | 111,486 | 111,582 |
+| Double helper calls in page key handler | 4 | 0 |
+
+The section-byte reduction is 104 bytes; alignment makes the extent reduction 96 bytes.
+The remaining callers still retain the shared double helpers.
+No device timing claim follows from the reduced call count.
+The ARM output uses `qsub r1, r4, r0` for the page subtraction.
+It replaces calls to `__aeabi_i2d`, `__aeabi_dsub`, `__aeabi_dcmpgt`, and `__aeabi_dcmpun` in that handler.
+
+`tests/cases/expr/integer_arithmetic.slint` compares generated results with the original f64 arithmetic on 121 operand pairs.
+It covers i32 endpoints, values beyond f32's exact-integer range, saturation, subtraction order, fractional literals, and cancellation.
+The complete compiler library/integration suite passes all 367 tests.
+The unfiltered Rust test driver passes 849 tests, with 11 ignored and none failed or filtered out.
+Qt tests are excluded by the driver's disabled default features.
+
+```sh
+cargo test --locked --manifest-path tests/Cargo.toml -p test-driver-rust --no-default-features
+```
+
+The host needs fontconfig linker metadata; this environment used a local pkg-config file pointing to its installed fontconfig runtime library.
+A final firmware rebuild with the original registry uom dependency confirms the 347,168-byte extent.
+
+### Double Arithmetic Outside Slint
+
+The callers of `Ratio<u32>::from_f64` resolve to USB PD policy-engine and power-supply conversion functions.
+For example, `usbpd` 2.0.0 `FixedSupply::voltage` constructs an `ElectricPotential` with `_50millivolts`.
+The `uom` 0.36.0 `unit!` macro implements integer-storage conversion coefficients and additive constants via `Ratio::from_f64`.
+This includes conversion constants equal to zero and one.
+This path is separate from Slint and must not be counted as renderer overhead.
+
+A separate local `uom` experiment short-circuits only zero and one in the `PrimInt, BigInt` conversion helper:
+
+```rust
+if value == 0.0 {
+    return T::from_integer(<V as $crate::num::Zero>::zero());
+}
+if value == 1.0 {
+    return T::from_integer(<V as $crate::num::One>::one());
+}
+```
+
+All other values still use the original `FromPrimitive::from_f64` implementation.
+A host test confirms equality with the original conversion for the firmware's `Ratio<u32>` storage.
+This is an external dependency experiment, not a committed Slint change or hardware-validated firmware patch.
+
+| Identical Local uom Path | Original | Zero/One Fast Path |
+| --- | ---: | ---: |
+| `.text` | 278,776 | 276,912 |
+| `.rodata` | 64,112 | 63,600 |
+| `.data` | 764 | 764 |
+| `.bss` | 58,904 | 58,904 |
+| Flash extent | 346,720 | 344,352 |
+
+The controlled extent saving is 2,368 bytes; section bytes decrease by 2,376.
+Comparing registry uom against the modified local source would overstate the saving by 448 bytes because source paths differ.
+The firmware lockfile was restored after the experiment; no firmware or external dependency changes were pushed.
+
+The larger remaining opportunities are eliminating unused math callers and specializing known rational unit coefficients.
+Replacing f64 with f32 globally, or substituting approximate trig functions, requires a different numerical contract and explicit error bounds.
+It is not an equivalent size optimization.
