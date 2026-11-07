@@ -370,6 +370,18 @@ A final firmware rebuild with the original registry uom dependency confirms the 
 
 ### Double Arithmetic Outside Slint
 
+**Upstream status correction:** the measurements below use the firmware's locked `usbpd` 2.0.0 and `uom` 0.36.0.
+They do not describe the latest usbpd release.
+[okhsunrog's PR #58](https://github.com/elagil/usbpd/pull/58) migrated usbpd to `uom-ng` 0.39.0 with compile-time conversion factors.
+It was merged on October 30, 2026 and included in [usbpd 3.0.0](https://github.com/elagil/usbpd/releases/tag/usbpd/v3.0.0).
+The latest GitHub release checked on November 7 is [3.1.0](https://github.com/elagil/usbpd/releases/tag/usbpd/v3.1.0).
+Applications exchanging quantities with usbpd must also migrate their `uom` dependency to the `uom-ng` package under the `uom` alias.
+The existing Cargo requirement `usbpd = "2.0.0"` does not select 3.x through a routine lockfile update.
+
+Prefer evaluating that upstream migration before extending the historical local uom experiment below.
+The PR reports elimination of double and num-rational symbols in its USB PD example; that is not a measurement of this Slint firmware.
+The updated dependency has not been built or measured in this investigation, and Slint's independent libm callers may still retain double helpers.
+
 The callers of `Ratio<u32>::from_f64` resolve to USB PD policy-engine and power-supply conversion functions.
 For example, `usbpd` 2.0.0 `FixedSupply::voltage` constructs an `ElectricPotential` with `_50millivolts`.
 The `uom` 0.36.0 `unit!` macro implements integer-storage conversion coefficients and additive constants via `Ratio::from_f64`.
