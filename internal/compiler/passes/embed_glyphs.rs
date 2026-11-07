@@ -681,39 +681,32 @@ fn try_extract_literal_from_element(
     })
 }
 
+/// Returns whether a font size can require the renderer's default size at runtime.
 pub fn collect_font_sizes_used(
     component: &Rc<Component>,
     scale_factor: f64,
     sizes_seen: &mut Vec<i16>,
-) {
-    let mut add_font_size = |logical_size: f64| {
-        let pixel_size = (logical_size * scale_factor) as i16;
-        match sizes_seen.binary_search(&pixel_size) {
-            Ok(_) => {}
-            Err(pos) => sizes_seen.insert(pos, pixel_size),
-        }
-    };
-
-    recurse_elem_including_sub_components(component, &(), &mut |elem, _| match elem
-        .borrow()
-        .base_type
-        .to_string()
-        .as_str()
-    {
-        "TextInput" | "Text" | "SimpleText" | "ComplexText" | "StyledTextItem" => {
-            if let Some(font_size) = try_extract_literal_from_element(elem, "font-size", Unit::Px) {
-                add_font_size(font_size)
+) -> bool {
+    let mut needs_default_size = false;
+    recurse_elem_including_sub_components(component, &(), &mut |elem, _| {
+        let property = match elem.borrow().base_type.to_string().as_str() {
+            "TextInput" | "Text" | "SimpleText" | "ComplexText" | "StyledTextItem" => "font-size",
+            "Dialog" | "Window" | "WindowItem" => "default-font-size",
+            _ => return,
+        };
+        if let Some(font_size) = try_extract_literal_from_element(elem, property, Unit::Px) {
+            let pixel_size = (font_size * scale_factor) as i16;
+            if let Err(pos) = sizes_seen.binary_search(&pixel_size) {
+                sizes_seen.insert(pos, pixel_size);
             }
+            needs_default_size |= font_size <= 0.
+                || !font_size.is_finite()
+                || !crate::namedreference::NamedReference::new(elem, property.into()).is_constant();
+        } else {
+            needs_default_size = true;
         }
-        "Dialog" | "Window" | "WindowItem" => {
-            if let Some(font_size) =
-                try_extract_literal_from_element(elem, "default-font-size", Unit::Px)
-            {
-                add_font_size(font_size)
-            }
-        }
-        _ => {}
     });
+    needs_default_size
 }
 
 pub fn collect_font_weights_used(component: &Rc<Component>, weights_seen: &mut Vec<u16>) {

@@ -334,15 +334,25 @@ pub async fn run_passes(
 
             let sf = type_loader.compiler_config.const_scale_factor.unwrap_or(1.) as f64;
 
-            // Include at least the default font sizes used in the MCU backend
-            let mut font_pixel_sizes = vec![(12. * sf) as i16];
+            let mut font_pixel_sizes = Vec::new();
+            // Without a fixed scale factor, even a literal logical size can select
+            // the default-size bitmap at runtime on a lower-density display.
+            let mut needs_default_font_size =
+                type_loader.compiler_config.const_scale_factor.is_none();
             use i_slint_common::sharedfontique::fontique;
             let mut font_weights = vec![fontique::FontWeight::NORMAL.value() as u16];
             doc.visit_all_used_components(|component| {
-                embed_glyphs::collect_font_sizes_used(component, sf, &mut font_pixel_sizes);
+                needs_default_font_size |=
+                    embed_glyphs::collect_font_sizes_used(component, sf, &mut font_pixel_sizes);
                 embed_glyphs::collect_font_weights_used(component, &mut font_weights);
                 embed_glyphs::scan_string_literals(component, &mut characters_seen);
             });
+            if needs_default_font_size || font_pixel_sizes.is_empty() {
+                let default_size = (12. * sf) as i16;
+                if let Err(pos) = font_pixel_sizes.binary_search(&default_size) {
+                    font_pixel_sizes.insert(pos, default_size);
+                }
+            }
 
             // This is not perfect, as this includes translations that may not be used.
             #[cfg(feature = "bundle-translations")]
