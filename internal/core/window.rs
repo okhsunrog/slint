@@ -665,6 +665,7 @@ pub struct WindowInner {
     pinned_fields: Pin<Box<WindowPinnedFields>>,
 
     menubar: RefCell<Option<vtable::VWeak<MenuVTable>>>,
+    menubar_shortcut_handler: Cell<Option<fn(&Self, &InternalKeyEvent) -> KeyEventResult>>,
 
     /// Stack of currently active popups
     pub active_popups: RefCell<Vec<PopupWindow>>,
@@ -742,6 +743,7 @@ impl WindowInner {
             prevent_focus_change: Default::default(),
             ctx: Default::default(),
             menubar: Default::default(),
+            menubar_shortcut_handler: Default::default(),
             native_drag: Default::default(),
         }
     }
@@ -1296,7 +1298,9 @@ impl WindowInner {
         // Emulate macOS menubar behavior: The OS consumes the event before it reaches any
         // Slint widgets. Therefore we process the menubar shortcuts here first and abort event
         // propagation if a shortcut matches.
-        if self.process_menubar_shortcuts(&internal_key_event) == KeyEventResult::EventAccepted {
+        if self.menubar_shortcut_handler.get().is_some_and(|handler| {
+            handler(self, &internal_key_event) == KeyEventResult::EventAccepted
+        }) {
             self.ensure_tree_instantiated();
             return crate::input::KeyEventResult::EventAccepted;
         }
@@ -1975,6 +1979,7 @@ impl WindowInner {
     /// Generally, the native menubar should capture the shortcuts first,
     /// but in case it doesn't, the window can still match them manually.
     pub fn setup_menubar_shortcuts(&self, menubar: VRc<MenuVTable>) {
+        self.menubar_shortcut_handler.set(Some(Self::process_menubar_shortcuts));
         *self.menubar.borrow_mut() = Some(VRc::downgrade(&menubar));
         let weak = VRc::downgrade(&menubar);
         self.pinned_fields.menubar_shortcuts.set_binding(move || {

@@ -1100,8 +1100,30 @@ pub struct Transform {
     pub cached_rendering_data: CachedRenderingData,
 }
 
+impl Transform {
+    fn children_transform(item_rc: &ItemRc) -> Option<crate::lengths::ItemTransform> {
+        use crate::lengths::ItemTransform;
+        item_rc.downcast::<Self>().map(|transform_item| {
+            let item = transform_item.as_pin_ref();
+            let origin = item.transform_origin().to_euclid().to_vector().cast::<f32>();
+            ItemTransform::translation(-origin.x, -origin.y)
+                .cast()
+                .then_scale(item.transform_scale_x(), item.transform_scale_y())
+                .then_rotate(euclid::Angle { radians: item.transform_rotation().to_radians() })
+                .then_translate(origin)
+        })
+    }
+}
+
 impl Item for Transform {
-    fn init(self: Pin<&Self>, _self_rc: &ItemRc) {}
+    fn init(self: Pin<&Self>, _self_rc: &ItemRc) {
+        crate::item_tree::TRANSFORM_FUNCTIONS.with(|functions| {
+            functions.set(Some(&crate::item_tree::TransformFunctions {
+                is_transform: |item| ItemRef::downcast_pin::<Transform>(item).is_some(),
+                children_transform: Self::children_transform,
+            }));
+        });
+    }
 
     fn deinit(self: Pin<&Self>, _window_adapter: &Rc<dyn WindowAdapter>) {}
 

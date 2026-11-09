@@ -8,8 +8,8 @@ The follow-up sections below record additional measurements.
 With disabled-metrics elimination, fixed-scale font pruning, and exact integer arithmetic, the earlier Slint-only flash extent was 347,168 bytes, leaving 111,582 bytes.
 Font pruning requires `SLINT_SCALE_FACTOR=1` for this firmware; without a fixed scale, the compiler preserves the fallback size.
 
-The latest measured combination occupies 332,544 bytes, leaving 126,206 bytes of flash.
-It includes the Flickable registration refactor, USB PD 3.1.0, the local uom-ng constant-reciprocal fix, and the RGB565 BE firmware path.
+The latest measured combination occupies 324,128 bytes, leaving 134,622 bytes of flash.
+It includes the Flickable, Transform, and menu-shortcut registration changes, USB PD 3.1.0, the local uom-ng fix, and the RGB565 BE firmware path.
 The external dependency and firmware patches remain local; the ordinary firmware lockfile alone does not reproduce this result.
 See the follow-up sections for controlled comparisons and validation limits.
 
@@ -610,3 +610,85 @@ SLINT_TEST_FILTER=flickable cargo test --locked --manifest-path tests/Cargo.toml
 
 The recorded host runs disable incremental compilation and test debug information to limit disk use.
 The C++ run uses the installed fontconfig runtime through local pkg-config metadata, as in the earlier Rust validation.
+
+## Transform and Menu Shortcuts, November 9, 2026
+
+Two independent retention paths remain after the Flickable change.
+`ItemRc::children_transform` and `render_item_children` reference the Transform vtable from generic coordinate mapping and clipping checks.
+The firmware has no Slint transform properties; its physical display rotation is implemented separately in the display driver.
+
+`Transform::init` now registers the existing matrix calculation and checked type query.
+Both generic callers use those registered functions.
+The matrix arithmetic, inverse handling, property reads, and clipping exception are unchanged.
+The vtable layout and checked downcast implementation are unchanged, with no new unsafe operations.
+The manually constructed unit-test tree now calls `register_item_tree`, following the initialization protocol used by generated trees.
+
+The keyboard path separately calls `process_menubar_shortcuts` even when no menubar has been installed.
+Its ambiguous-shortcut warning retains `Keys::Display`, which occupies 3,000 bytes in the preceding build.
+`setup_menubar_shortcuts` now installs that handler in the window, and keyboard dispatch calls it only when installed.
+Shortcut activation, dynamic enabled/visible entries, event consumption, and the ambiguous-shortcut warning are preserved.
+The handler holds no menu or item reference; the existing weak menu reference still controls its lifetime.
+The final firmware retains neither `Keys::Display` nor the menu-shortcut handler, while `Keys::Debug` remains.
+
+The following builds use the same stable compiler, release options, fixed scale, BE firmware, and patched uom-ng source.
+
+| Measurement | Flickable Baseline | Plus Transform Registration | Plus Menu Registration |
+| --- | ---: | ---: | ---: |
+| `.text` | 266,280 | 264,640 | 260,248 |
+| `.rodata` | 62,436 | 62,388 | 60,052 |
+| `.data` | 764 | 764 | 764 |
+| `.bss` | 59,424 | 59,432 | 59,432 |
+| Flash extent | 332,544 | 330,848 | 324,128 |
+| Remaining budget | 126,206 | 127,902 | 134,622 |
+
+Transform registration saves 1,696 bytes of flash extent and adds eight bytes of static RAM.
+Menu registration saves a further 6,720 bytes, for a combined saving of 8,416 bytes.
+The window gains one optional function-pointer field.
+In this ARM build, its enclosing `Rc<MinimalSoftwareWindow>` allocation still requests 688 bytes with eight-byte alignment before and after the menu change.
+That layout observation does not guarantee an unchanged allocation size on other targets or configurations.
+No device timing or peak-heap measurements were performed.
+
+### Remaining Double Arithmetic
+
+The Transform change removes `TransformVTable`, `libm::k_sinf` (168 bytes), and `libm::k_cosf` (192 bytes) from the firmware.
+Those removed symbols are part of the measured saving above, not additional savings.
+
+Disassembly still shows this chain in the software renderer:
+
+```text
+PrepareScene::process_rectangle
+  -> process_rectangle_impl: linear-gradient angle.to_radians().tan()
+     -> libm::rem_pio2f (2,384 bytes)
+     -> libm::k_tanf (296 bytes)
+        -> double arithmetic and conversion helpers
+```
+
+The source expression uses f32, but libm uses double intermediates for range reduction and tangent evaluation.
+The common rectangle renderer handles all brush variants, retaining that branch even though this UI uses solid colors.
+This patch preserves gradient support and numerical behavior; it does not substitute an approximate tangent or change angle normalization.
+
+Following the LLVM outlined helpers also identifies double conversions, additions, and comparisons in generated UI binding and geometry functions.
+Removing the gradient chain alone would therefore not prove that every double helper becomes removable.
+These are identified static call paths, not runtime frequency measurements or an exhaustive whole-program call graph.
+The current ELF has no spring/sine/cosine implementation symbols; earlier arithmetic measurements described older builds with different retained callers.
+
+### Validation
+
+All 340 core library tests pass, including the new transform registration and inverse test.
+It covers the absence of transforms before registration, a 90-degree rotation about a nonzero origin, nonuniform scale, singular inversion, and item-tree release.
+Existing clipping and coordinate mapping tests continue to pass.
+The unfiltered Rust driver passes 850 tests, with 11 ignored and none failed.
+Seven selected C++ tests pass: two transform cases, two rotation cases, two scale/rotate gesture cases, and the menu-shortcut case.
+The extended menu test verifies normal key delivery to a separate window without a menu, alongside dynamic and disabled menu shortcuts.
+The ARM release build passes with the original memory layout and flash limit.
+Device rendering and timing remain untested.
+
+```sh
+cargo test --locked -p i-slint-core --lib --features i-slint-common/fontconfig-dlopen
+cargo test --locked --manifest-path tests/Cargo.toml -p test-driver-rust --no-default-features
+for filter in transform rotation scalerotate menubar_shortcut; do
+    cargo test --locked --manifest-path tests/Cargo.toml -p test-driver-cpp --no-default-features -- "$filter"
+done
+```
+
+These driver runs were sequential, with no overlapping rebuilds of shared test artifacts.

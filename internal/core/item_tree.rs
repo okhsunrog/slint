@@ -31,6 +31,18 @@ crate::thread_local! {
         = const { core::cell::Cell::new(None) };
 }
 
+// These operations are registered by Transform::init so generic traversal and
+// clipping checks do not retain transforms in applications that never use them.
+pub(crate) struct TransformFunctions {
+    pub is_transform: fn(Pin<ItemRef<'_>>) -> bool,
+    pub children_transform: fn(&ItemRc) -> Option<ItemTransform>,
+}
+
+crate::thread_local! {
+    pub(crate) static TRANSFORM_FUNCTIONS: core::cell::Cell<Option<&'static TransformFunctions>>
+        = const { core::cell::Cell::new(None) };
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 /// A range of indices
@@ -1048,14 +1060,8 @@ impl ItemRc {
     /// Returns the transform to apply to children to map them into the local coordinate space of this item.
     /// Typically this is None, but rotation for example may return Some.
     pub fn children_transform(&self) -> Option<ItemTransform> {
-        self.downcast::<crate::items::Transform>().map(|transform_item| {
-            let item = transform_item.as_pin_ref();
-            let origin = item.transform_origin().to_euclid().to_vector().cast::<f32>();
-            ItemTransform::translation(-origin.x, -origin.y)
-                .cast()
-                .then_scale(item.transform_scale_x(), item.transform_scale_y())
-                .then_rotate(euclid::Angle { radians: item.transform_rotation().to_radians() })
-                .then_translate(origin)
+        TRANSFORM_FUNCTIONS.with(|functions| {
+            functions.get().and_then(|functions| (functions.children_transform)(self))
         })
     }
 
@@ -2866,7 +2872,7 @@ mod tests {
         let mut clip = Clip::default();
         clip.clip = Property::new(true);
 
-        (
+        let result = (
             window_adapter.clone(),
             VRc::into_dyn(VRc::new(TransformTestItemTree {
                 item_tree: vec![
@@ -2911,7 +2917,9 @@ mod tests {
                 clip,
                 leaf: WindowItem::default(),
             })),
-        )
+        );
+        register_item_tree(&result.1, None);
+        result
     }
 
     fn assert_point_approx_eq(actual: LogicalPoint, expected: LogicalPoint) {
@@ -2970,6 +2978,46 @@ mod tests {
         // Position of position of first_child  + first_child_of_first_child
         assert_eq!(point.x, GEOMETRY_POSITION_X + GEOMETRY_POSITION_X - 5.);
         assert_eq!(point.y, GEOMETRY_POSITION_Y + GEOMETRY_POSITION_Y + 7.);
+    }
+
+    #[test]
+    fn test_transform_registration_and_inverse() {
+        let (_plain_window, plain_tree) = create_one_node_component(Some(WindowItem::default()));
+        let plain = ItemRc::new_root(plain_tree);
+        assert!(TRANSFORM_FUNCTIONS.with(|functions| functions.get().is_none()));
+        assert!(plain.children_transform().is_none());
+
+        for _ in 0..2 {
+            let (_window, tree) = create_transform_test_items();
+            let weak = VRc::downgrade(&tree);
+            let root = ItemRc::new_root(tree);
+            let transformed = root.first_child().unwrap();
+            let mapped = transformed.downcast::<Transform>().unwrap();
+            let item = mapped.as_pin_ref();
+            Transform::FIELD_OFFSETS
+                .transform_origin()
+                .apply_pin(item)
+                .set(LogicalPosition::new(5., 7.));
+            Transform::FIELD_OFFSETS.transform_rotation().apply_pin(item).set(90.);
+            let point = Point2D::new(8., 11.);
+            let matrix = transformed.children_transform().unwrap();
+            assert_point_approx_eq(matrix.transform_point(point), Point2D::new(-7., 13.));
+            let inverse = transformed.inverse_children_transform().unwrap();
+            assert_point_approx_eq(inverse.transform_point(matrix.transform_point(point)), point);
+            assert!(plain.children_transform().is_none());
+            assert!(TRANSFORM_FUNCTIONS.with(|functions| {
+                let functions = functions.get().unwrap();
+                (functions.is_transform)(transformed.borrow())
+                    && !(functions.is_transform)(plain.borrow())
+            }));
+
+            Transform::FIELD_OFFSETS.transform_scale_x().apply_pin(item).set(0.);
+            assert!(transformed.inverse_children_transform().is_none());
+            drop(mapped);
+            drop(transformed);
+            drop(root);
+            assert!(weak.upgrade().is_none());
+        }
     }
 
     #[test]

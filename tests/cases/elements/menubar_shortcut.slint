@@ -1,6 +1,17 @@
 // Copyright © SixtyFPS GmbH <info@slint.dev>
 // SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
 
+export component PlainWindow inherits Window {
+    out property <int> received;
+    scope := FocusScope {
+        key-pressed(event) => {
+            root.received += 1;
+            return accept;
+        }
+    }
+    init => { scope.focus(); }
+}
+
 export component TestCase inherits Window {
     in-out property <string> result;
     in-out property <bool> show-open: false;
@@ -41,6 +52,9 @@ export component TestCase inherits Window {
 /*
 ```rust
 use slint::platform::Key;
+let plain = PlainWindow::new().unwrap();
+slint_testing::send_keyboard_string_sequence(&plain, "x");
+assert_eq!(plain.get_received(), 1);
 let instance = TestCase::new().unwrap();
 let assert_shortcut = |keys: &[Key], expected: &str| {
     slint_testing::send_key_combo(&instance, keys.iter().copied());
@@ -66,9 +80,15 @@ assert_shortcut(&[Key::Control, Key::B], "shortcut-1");
 instance.set_dynamic_shortcuts(slint::ModelRc::default());
 assert_shortcut(&[Key::Control, Key::A], "");
 assert_shortcut(&[Key::Control, Key::B], "");
+drop(instance);
+slint_testing::send_keyboard_string_sequence(&plain, "x");
+assert_eq!(plain.get_received(), 2);
 ```
 
 ```cpp
+auto plain = PlainWindow::create();
+slint_testing::send_keyboard_string_sequence(&*plain, "x");
+assert_eq(plain->get_received(), 1);
 auto handle = TestCase::create();
 const TestCase &instance = *handle;
 slint::SharedString ctrl(slint::platform::key_codes::Control);
@@ -96,6 +116,8 @@ assert_shortcut("B", "shortcut-1");
 instance.set_dynamic_shortcuts(nullptr);
 assert_shortcut("A", "");
 assert_shortcut("B", "");
+slint_testing::send_keyboard_string_sequence(&*plain, "x");
+assert_eq(plain->get_received(), 2);
 ```
 
 ```js
