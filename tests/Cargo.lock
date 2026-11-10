@@ -5743,6 +5743,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-gradient-math"
+version = "1.18.1"
+dependencies = [
+ "i-slint-core",
+ "num-traits",
+]
+
+[[package]]
 name = "test-no-std-metrics"
 version = "1.18.1"
 dependencies = [

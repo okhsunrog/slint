@@ -1630,7 +1630,7 @@ fn process_rectangle_impl(
 
     let color = if let Brush::LinearGradient(g) = &args.background {
         let angle = g.angle() + args.rotation.angle();
-        let tan = angle.to_radians().tan().abs();
+        let tan = i_slint_core::graphics::linear_gradient_tangent(g, args.rotation.angle());
         let start = if !tan.is_finite() {
             255.
         } else {

@@ -226,12 +226,52 @@ impl Brush {
 #[repr(transparent)]
 pub struct LinearGradientBrush(SharedVector<GradientStop>);
 
+// The constructor retains the math implementation only when a Rust gradient can exist.
+// C++ constructs the shared-vector representation directly, so FFI keeps direct calls.
+#[cfg(all(not(feature = "ffi"), feature = "std"))]
+static LINEAR_GRADIENT_TANGENT: std::sync::OnceLock<fn(f32) -> f32> = std::sync::OnceLock::new();
+
+#[cfg(all(not(feature = "ffi"), not(feature = "std")))]
+crate::thread_local! {
+    static LINEAR_GRADIENT_TANGENT: core::cell::Cell<Option<fn(f32) -> f32>> = const { core::cell::Cell::new(None) };
+}
+
+/// Returns the tangent used by the software renderer for a rotated linear gradient.
+#[doc(hidden)]
+pub fn linear_gradient_tangent(gradient: &LinearGradientBrush, rotation: f32) -> f32 {
+    let angle = gradient.angle() + rotation;
+    #[cfg(feature = "ffi")]
+    {
+        angle.to_radians().tan().abs()
+    }
+    #[cfg(all(not(feature = "ffi"), feature = "std"))]
+    {
+        LINEAR_GRADIENT_TANGENT.get().expect("gradient constructor registered tangent")(angle)
+    }
+    #[cfg(all(not(feature = "ffi"), not(feature = "std")))]
+    {
+        LINEAR_GRADIENT_TANGENT
+            .with(|slot| slot.get())
+            .expect("gradient constructor registered tangent")(angle)
+    }
+}
+
 impl LinearGradientBrush {
     /// Creates a new linear gradient, described by the specified angle and the provided color stops.
     ///
     /// The angle need to be specified in degrees.
     /// The stops don't need to be sorted as this function will sort them.
     pub fn new(angle: f32, stops: impl IntoIterator<Item = GradientStop>) -> Self {
+        #[cfg(not(feature = "ffi"))]
+        {
+            fn tangent(angle: f32) -> f32 {
+                angle.to_radians().tan().abs()
+            }
+            #[cfg(feature = "std")]
+            LINEAR_GRADIENT_TANGENT.get_or_init(|| tangent);
+            #[cfg(not(feature = "std"))]
+            LINEAR_GRADIENT_TANGENT.with(|slot| slot.set(Some(tangent)));
+        }
         let stop_iter = stops.into_iter();
         let mut encoded_angle_and_stops = SharedVector::with_capacity(stop_iter.size_hint().0 + 1);
         // The gradient's first stop is a fake stop to store the angle

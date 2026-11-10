@@ -1,0 +1,20 @@
+# Copyright © SixtyFPS GmbH <info@slint.dev>
+# SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+[package]
+name = "test-gradient-math"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = ["i-slint-core/std", "num-traits/std"]
+ffi = ["i-slint-core/ffi"]
+
+[dependencies]
+i-slint-core = { workspace = true, features = ["unsafe-single-threaded", "libm"] }
+num-traits = { version = "0.2", default-features = false, features = ["libm"] }

@@ -8,8 +8,8 @@ The follow-up sections below record additional measurements.
 With disabled-metrics elimination, fixed-scale font pruning, and exact integer arithmetic, the earlier Slint-only flash extent was 347,168 bytes, leaving 111,582 bytes.
 Font pruning requires `SLINT_SCALE_FACTOR=1` for this firmware; without a fixed scale, the compiler preserves the fallback size.
 
-The latest measured combination occupies 324,128 bytes, leaving 134,622 bytes of flash.
-It includes the Flickable, Transform, and menu-shortcut registration changes, USB PD 3.1.0, the local uom-ng fix, and the RGB565 BE firmware path.
+The latest measured combination occupies 316,416 bytes, leaving 142,334 bytes of flash.
+It includes exact integer comparisons, constructor-registered gradient math, the earlier Slint changes, USB PD 3.1.0, the local uom-ng fix, and RGB565 BE.
 The external dependency and firmware patches remain local; the ordinary firmware lockfile alone does not reproduce this result.
 See the follow-up sections for controlled comparisons and validation limits.
 
@@ -692,3 +692,108 @@ done
 ```
 
 These driver runs were sequential, with no overlapping rebuilds of shared test artifacts.
+
+## Exact Comparisons and Gradient Math, November 9, 2026
+
+This follow-up starts from `b75fda60f43249afc2775185e7ebdb51fefee255`.
+It uses firmware `baebbf4a18d4369e8debfb3799ce9c8b734e8a7b` with the local USB PD, uom-ng, and RGB565 BE changes described above.
+The compiler, optimization settings, UI, font scale, memory layout, and source paths are identical across these three builds.
+
+| Measurement | Published Baseline | Plus Integer Comparisons | Plus Gradient Registration |
+| --- | ---: | ---: | ---: |
+| `.text` | 260,248 | 259,848 | 252,808 |
+| `.rodata` | 60,052 | 60,052 | 59,776 |
+| `.data` | 764 | 764 | 764 |
+| `.bss` | 59,432 | 59,432 | 59,436 |
+| Flash extent | 324,128 | 323,744 | 316,416 |
+| Remaining budget | 134,622 | 135,006 | 142,334 |
+
+Integer comparisons save 384 bytes of flash extent.
+Gradient registration saves another 7,328 bytes, for a combined saving of 7,712 bytes.
+Static RAM increases by four bytes in this firmware.
+No device timing or peak-stack measurements were performed.
+
+### Integer Comparison Semantics
+
+The Rust generator previously converted numeric comparisons to f64, including comparisons between two i32 properties.
+Numeric equality uses euclid's absolute epsilon of `1e-6`.
+Every i32 value and the difference between two i32 values are exactly representable in f64.
+Distinct integers differ by at least one, so integer equality and ordering preserve the previous results.
+
+The optimization accepts only int properties, int function parameters, and integral literals within the i32 range.
+It also follows representation-preserving numeric casts already emitted unchanged by the generator.
+Nested arithmetic, fractional operands, out-of-range literals, and other expression kinds keep the previous path.
+The iterative traversal of long binary-expression chains remains intact.
+Generated comparisons retain enclosing parentheses, including when return lowering introduces logical negation.
+
+The regression case covers 169 pairs of boundary values, values around the f32 precision boundary, all six comparisons, negation, and chained conditions.
+It also checks function parameters, cancellation, mixed arithmetic, fractional epsilon comparisons, infinities, and NaN.
+The existing conditional-return regression detected a missing-parentheses error during development; the corrected implementation passes that case.
+
+### Gradient Construction and Compatibility
+
+The common rectangle renderer retains `angle.to_radians().tan().abs()` even when an application uses only solid brushes.
+That f32 expression retains libm's double-precision range reduction and tangent intermediates.
+
+Rust's `LinearGradientBrush::new` now registers the unchanged tangent function.
+The renderer obtains it through an internal helper that takes a valid gradient and the renderer rotation.
+The angle addition, radians conversion, tangent, absolute value, and subsequent rasterization are unchanged.
+No angle normalization or approximate arithmetic is introduced.
+
+With `std`, a process-wide `OnceLock` supports constructing a brush on one thread and rendering it on another.
+Without `std`, the existing `unsafe-single-threaded` storage mechanism follows Slint's single-core, non-interrupt API contract.
+The registry stores only a function pointer and retains no brush allocation.
+Registered gradient evaluation adds an indirect call; its device timing has not been measured.
+Safe Rust construction uses `new`; cloning preserves that initialization invariant.
+
+C++ constructs the shared-vector gradient representation directly in its header.
+The `ffi` feature therefore retains a direct tangent call, without requiring registration or changing the C++ ABI.
+Brush layout, gradient stops, and public language syntax are unchanged.
+The helper is hidden from generated documentation and belongs to the internal core crate.
+
+### Double-Precision Result
+
+After integer comparisons alone, the identified generated-UI double call paths disappear, while the renderer's tangent path remains.
+After gradient registration, the final ELF has no double arithmetic/comparison/conversion helper symbols and no `rem_pio2f` or `k_tanf`.
+Disassembly also has no calls to the double helpers previously identified in this investigation.
+This result applies to this firmware and configuration; applications using gradients or other double arithmetic can retain those functions.
+Integer 64-bit division remains for legitimate firmware work and is not double-precision arithmetic.
+
+The renderer still retains other brush handling, texture/text rendering, rounded rectangles, and f32 math such as `atanf` and `sqrtf`.
+Those are separate opportunities requiring their own measurements and behavior checks.
+The present change does not disable gradients, fonts, clipping, diagnostics, or UI features.
+
+### Validation and Reproduction
+
+The gradient regression compares the new helper with the previous expression for 17 special values and 4,096 deterministic f32 bit patterns.
+Each angle is tested with six renderer rotations, comparing bits for non-NaN results and preserving NaN results.
+It also checks cloning and cross-thread construction/use when `std` is enabled.
+
+All four gradient-math configurations pass: `std`, `no_std`, and each with `ffi`.
+The core library passes 340 tests, and compiler library/integration tests pass 367.
+The unfiltered Rust driver passes 851 tests, with 11 ignored and none failed.
+Ten software-renderer screenshot tests pass against existing references, covering five gradient cases with runtime and embedded resources.
+The embedded-resource screenshot checks include renderer rotation and partial-rendering comparisons.
+No reference image or threshold was changed.
+Three selected C++ gradient tests pass, exercising the direct-construction FFI path.
+All test drivers ran sequentially through completion.
+
+The dedicated `test-gradient-math` package isolates `no_std` validation from the core crate's development dependencies, which enable `std` through Slint.
+Run each feature configuration separately; combining workspace packages can unify features and invalidate a `no_std` check.
+
+```sh
+cargo test --locked --manifest-path tests/Cargo.toml -p test-gradient-math
+cargo test --locked --manifest-path tests/Cargo.toml -p test-gradient-math --no-default-features
+cargo test --locked --manifest-path tests/Cargo.toml -p test-gradient-math --no-default-features --features ffi
+cargo test --locked --manifest-path tests/Cargo.toml -p test-gradient-math --features ffi
+cargo test --locked -p i-slint-core --lib --features i-slint-common/fontconfig-dlopen
+cargo test --locked -p i-slint-compiler --features renderer-software,rust,i-slint-common/fontconfig-dlopen --lib --tests
+cargo test --locked --manifest-path tests/Cargo.toml -p test-driver-rust --no-default-features
+SLINT_TEST_FILTER=gradient cargo test --locked --manifest-path tests/Cargo.toml -p test-driver-screenshots --no-default-features --features software-embed-assets
+cargo test --locked --manifest-path tests/Cargo.toml -p test-driver-cpp --no-default-features -- gradient
+```
+
+The measurement artifacts are `integer-comparisons-final.{map,elf}` and `integer-gradient-final.{map,elf,asm,symbols}`.
+The map comparison is `integer-gradient-comparison.json`, generated by `scripts/mcu_flash_report.py`.
+An isolated prototype used a longer source path and had a different absolute rodata size.
+Its controlled saving was also 7,328 bytes; the table above uses only the main checkout to avoid mixing path effects.

@@ -20,6 +20,7 @@ members = [
   'screenshots',
   'backends',
   'no_std_metrics',
+  'gradient_math',
   'manual/windowattributes',
   'manual/module-builds/blogica',
   'manual/module-builds/blogicb',
