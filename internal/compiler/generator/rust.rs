@@ -4174,16 +4174,39 @@ fn compile_binary_expression(expr: &Expression, ctx: &EvaluationContext) -> Toke
     let mut spine = Vec::new();
     let mut node = expr;
     while let Expression::BinaryExpression { lhs, rhs, op } = node {
-        spine.push((rhs, *op));
+        spine.push((lhs, rhs, *op));
         node = lhs;
     }
     let mut result = compile_expression_to_value_no_parenthesis(node, ctx);
     let mut result_ty = node.ty(ctx);
-    for (rhs, op) in spine.into_iter().rev() {
-        result = compile_binary_operator(result, &result_ty, rhs, op, ctx);
+    for (lhs, rhs, op) in spine.into_iter().rev() {
+        result = compile_exact_i32_comparison(lhs, rhs, op, ctx)
+            .unwrap_or_else(|| compile_binary_operator(result, &result_ty, rhs, op, ctx));
         result_ty = llr::binary_expression_ty(op, || result_ty);
     }
     result
+}
+
+fn compile_exact_i32_comparison(
+    lhs: &Expression,
+    rhs: &Expression,
+    op: char,
+    ctx: &EvaluationContext,
+) -> Option<TokenStream> {
+    let op = match op {
+        '=' => quote!(==),
+        '!' => quote!(!=),
+        '<' => quote!(<),
+        '>' => quote!(>),
+        '≤' => quote!(<=),
+        '≥' => quote!(>=),
+        _ => return None,
+    };
+    let lhs = compile_exact_i32_operand(lhs, ctx)?;
+    let rhs = compile_exact_i32_operand(rhs, ctx)?;
+    // i32 values and their differences are exact in f64.
+    // Distinct integers differ by at least one, exceeding the numeric equality epsilon of 1e-6.
+    Some(quote!(((#lhs) #op (#rhs))))
 }
 
 fn compile_binary_operator(
