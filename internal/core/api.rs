@@ -630,6 +630,7 @@ impl Window {
     /// This function panics if there is an error processing the event.
     /// Use [`Self::dispatch_event_with_result()`] to handle the error.
     #[track_caller]
+    #[cfg_attr(not(feature = "std"), inline)]
     pub fn dispatch_event(&self, event: crate::platform::WindowEvent) {
         self.dispatch_event_with_result(event).unwrap();
     }
@@ -656,6 +657,7 @@ impl Window {
     /// the top left corner of the window.
     ///
     /// Returns a [`WindowEventDispatchResult`] indicating how the event was handled.
+    #[cfg_attr(not(feature = "std"), inline)]
     pub fn dispatch_event_with_result(
         &self,
         event: crate::platform::WindowEvent,
