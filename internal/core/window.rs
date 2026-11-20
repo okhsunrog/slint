@@ -687,7 +687,7 @@ pub struct WindowInner {
     /// When the window is visible, keep a strong reference, and keep the event loop running
     strong_component_ref: RefCell<Option<(ItemTreeRc, crate::context::KeepAlive)>>,
     mouse_input_state: Cell<MouseInputState>,
-    touch_state: RefCell<TouchState>,
+    touch_state: RefCell<Option<TouchState>>,
     /// How the window adapter shows the current mouse cursor, `None` before the window asked.
     mouse_cursor_handling: RefCell<Option<MouseCursorHandling>>,
     /// The pointer position for the mouse cursor the renderer draws, `None` before the pointer
@@ -1342,7 +1342,7 @@ impl WindowInner {
         history: TouchHistory,
     ) -> Option<MouseDispatchResult> {
         let events =
-            self.touch_state.borrow_mut().process(id, position, phase, event_time, history);
+            self.touch_state.borrow_mut().get_or_insert_with(TouchState::default).process(id, position, phase, event_time, history);
         let mut aggregate: Option<MouseDispatchResult> = None;
         for event in events.into_iter() {
             if let Some(r) = self.process_mouse_input(event) {
