@@ -961,7 +961,7 @@ impl WindowInner {
             Option<crate::item_tree::ItemWeak>,
         )> = None;
 
-        if let Some(DragData { event: mut drop_event, allowed }) =
+        if let Some(DragData { event: mut drop_event, allowed, .. }) =
             mouse_input_state.drag_data.clone()
         {
             match &event {
@@ -1399,19 +1399,17 @@ impl WindowInner {
             // the new modifier state flows into `event.proposed-action` and the target's
             // `can-drop` re-runs — letting the user change copy/move/link with Ctrl/Shift
             // without having to move the mouse first.
-            let drag_pos = {
+            let drag_move = {
                 let state = self.mouse_input_state.take();
-                let pos = state.drag_data.as_ref().map(|d| d.event.position);
+                let refresh = state
+                    .drag_data
+                    .as_ref()
+                    .map(|d| (d.refresh_on_modifier_change, d.event.position));
                 self.mouse_input_state.replace(state);
-                pos
+                refresh
             };
-            if let Some(pos) = drag_pos {
-                self.process_mouse_input(MouseEvent::Moved {
-                    position: crate::lengths::logical_point_from_api(pos),
-                    touch_finger_id: 0,
-                    event_time: None,
-                    history: Default::default(),
-                });
+            if let Some((refresh, pos)) = drag_move {
+                refresh(self, pos);
             }
         }
 

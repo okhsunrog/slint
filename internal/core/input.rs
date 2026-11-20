@@ -1446,6 +1446,8 @@ impl ClickState {
 /// The data for an in-flight drag-and-drop operation, held while a drag is active.
 #[derive(Clone)]
 pub(crate) struct DragData {
+    /// Keyboard modifier changes synthesize a pointer move only during a drag.
+    pub(crate) refresh_on_modifier_change: fn(&WindowInner, crate::api::LogicalPosition),
     /// The dragged payload together with its current position and proposed action.
     /// The `position` is updated on every move.
     pub(crate) event: DropEvent,
@@ -1515,7 +1517,18 @@ impl MouseInputState {
     ) {
         let (mut drop_event, allowed) = drag_area.initial_drop_event();
         drop_event.position = seed_position;
-        self.drag_data = Some(DragData { event: drop_event, allowed });
+        self.drag_data = Some(DragData {
+            event: drop_event,
+            allowed,
+            refresh_on_modifier_change: |window, position| {
+                window.process_mouse_input(MouseEvent::Moved {
+                    position: crate::lengths::logical_point_from_api(position),
+                    touch_finger_id: 0,
+                    event_time: None,
+                    history: Default::default(),
+                });
+            },
+        });
         self.drag_source = Some(source);
         drag_area.dragging.set(true);
     }
