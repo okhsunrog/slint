@@ -1,0 +1,57 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+export component TestCase {
+    in-out property <int> a;
+    in-out property <int> b;
+    in-out property <float> fractional;
+    out property <bool> equal: a == b;
+    out property <bool> negated-equal: !(a == b);
+    out property <bool> different: a != b;
+    out property <bool> less: a < b;
+    out property <bool> greater: a > b;
+    out property <bool> less-equal: a <= b;
+    out property <bool> greater-equal: a >= b;
+    out property <bool> chained: a == 0 && b != 1 && a <= b;
+    out property <bool> cancelled: (a + b) - b == a;
+    out property <bool> mixed-less: a < b + 0.5;
+    out property <bool> outside-range: a < 2147483648 && a != 2147483648;
+    out property <bool> fractional-equal: a == fractional;
+    out property <bool> fractional-less: a < fractional;
+    public function equal-parameters(lhs: int, rhs: int) -> bool { return lhs == rhs; }
+    out property <bool> test: equal && !different && less-equal && greater-equal;
+}
+
+/*
+```rust
+use slint::private_unstable_api::re_exports::ApproxEq;
+let instance = TestCase::new().unwrap();
+let values = [i32::MIN, i32::MIN + 1, -16777217, -16777216, -2, -1, 0, 1, 2,
+              16777216, 16777217, i32::MAX - 1, i32::MAX];
+for a in values {
+    instance.set_a(a);
+    for b in values {
+        instance.set_b(b);
+        let equal = (a as f64).approx_eq(&(b as f64));
+        assert_eq!(instance.get_equal(), equal);
+        assert_eq!(instance.get_different(), !equal);
+        assert_eq!(instance.get_negated_equal(), !equal);
+        assert_eq!(instance.get_less(), (a as f64) < b as f64);
+        assert_eq!(instance.get_greater(), (a as f64) > b as f64);
+        assert_eq!(instance.get_less_equal(), (a as f64) <= b as f64);
+        assert_eq!(instance.get_greater_equal(), (a as f64) >= b as f64);
+        assert_eq!(instance.get_chained(), a == 0 && b != 1 && a <= b);
+        assert!(instance.get_cancelled());
+        assert_eq!(instance.get_mixed_less(), (a as f64) < b as f64 + 0.5);
+        assert!(instance.get_outside_range());
+        assert_eq!(instance.invoke_equal_parameters(a, b), equal);
+    }
+    for fractional in [0.0, 0.0000005, 0.000002, 0.5, 16777216.0,
+                       f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+        instance.set_fractional(fractional);
+        assert_eq!(instance.get_fractional_equal(), (a as f64).approx_eq(&(fractional as f64)));
+        assert_eq!(instance.get_fractional_less(), (a as f64) < fractional as f64);
+    }
+}
+```
+*/
