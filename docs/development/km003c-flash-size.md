@@ -62,7 +62,7 @@ No item ABI, renderer option, font, UI feature, or public API changes.
 The resulting ELF has no `TextInputVTable`, `UnicodeWordIndices`, or `POWER_OF_FIVE_128` symbols.
 The last table alone occupied 10,416 bytes in the baseline.
 TextInput removal also drops substantial Unicode data and editing code.
-The bitmap font remains embedded: its named generated resource symbols total approximately 18.8 KB in the baseline.
+The bitmap font remains embedded: its named generated resource symbols total 18,556 bytes in the baseline.
 
 Size-sorted baseline symbols show approximately 87.6 KB of named i-slint-core functions and 24.0 KB of software-renderer functions.
 Core formatting/numeric functions contribute roughly 39.5 KB; application, USB/PD, and executor code are also significant.
