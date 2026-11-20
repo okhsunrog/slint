@@ -20,6 +20,7 @@ members = [
   'driver/typescript',
   'screenshots',
   'backends',
+  'no_std_metrics',
   'manual/windowattributes',
   'manual/module-builds/blogica',
   'manual/module-builds/blogicb',

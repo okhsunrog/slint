@@ -15,6 +15,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
+#[cfg(not(feature = "std"))]
+const EMBEDDED_OPTIONS: Option<&str> = option_env!("SLINT_DEBUG_PERFORMANCE");
+
 /// The method in which we refresh the window
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RefreshMode {
@@ -75,7 +78,7 @@ impl RenderingMetricsCollector {
         #[cfg(feature = "std")]
         let options = std::env::var("SLINT_DEBUG_PERFORMANCE").ok()?;
         #[cfg(not(feature = "std"))]
-        let options = option_env!("SLINT_DEBUG_PERFORMANCE")?;
+        let options = EMBEDDED_OPTIONS?;
         let mut output_console = false;
         let mut output_overlay = false;
         let mut refresh_mode = None;
@@ -180,6 +183,11 @@ impl RenderingMetricsCollector {
         renderer: &mut dyn crate::item_rendering::ItemRenderer,
         metrics: RenderingMetrics,
     ) {
+        // Renderer vtables can retain this path even when construction always returns None.
+        #[cfg(not(feature = "std"))]
+        if EMBEDDED_OPTIONS.is_none() {
+            return;
+        }
         let ctx = renderer.window().context().clone();
         self.ensure_reporting(&ctx);
         let now = Instant::now(&ctx);
