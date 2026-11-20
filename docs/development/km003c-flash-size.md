@@ -4,6 +4,10 @@ Measured on October 29, 2026, with the unchanged KM003C UI and peripherals.
 The focus-tracking change reduces flash section bytes by 82,196 on stable Rust.
 The resulting image links with the original flash limit and retains the firmware's panic/recovery handler.
 
+The follow-up sections below record additional measurements.
+With disabled-metrics elimination and fixed-scale font pruning, the latest measured flash extent is 347,264 bytes, leaving 111,486 bytes.
+Font pruning requires `SLINT_SCALE_FACTOR=1` for this firmware; without a fixed scale, the compiler preserves the fallback size.
+
 ## Revisions and Configuration
 
 - Firmware: `okhsunrog/km003c-firmware`, `slint-ui`, `702ea45d571d399985b8ffaf63df0f88fb1c4480`.
@@ -228,3 +232,75 @@ RUSTFLAGS='-C link-arg=-Tlink.x -C link-arg=-Tmetadata.x -C llvm-args=-machine-o
 
 Additional outlining can alter call overhead and stack behavior, so it needs device timing checks before adoption in the PD firmware.
 The source fix provides nearly all the demonstrated gain without these tuning options.
+
+## Follow-Up: Unused Font Sizes, November 7, 2026
+
+The glyph embedder unconditionally included a 12 px bitmap set.
+The KM003C UI specifies 14 px for its window default and text items, so the extra set is unused at scale 1.
+The compiler now omits the fallback set only when the scale is fixed and all collected font-size bindings are constant, positive literals.
+An unknown, mutable, non-positive, or missing size keeps the fallback.
+An explicitly requested 12 px size is always retained.
+
+Fixing the scale is necessary: a runtime scale change can make even a constant logical font size select a smaller bitmap set.
+`SLINT_SCALE_FACTOR` already sets the generated window's constant scale factor.
+This change adds no new switch and does not remove any characters or alter the retained glyphs.
+
+| Measurement | Previous Compiler, Scale 1 | Font Pruning, Scale 1 |
+| --- | ---: | ---: |
+| `.text` | 278,888 | 278,888 |
+| `.rodata` | 72,584 | 64,552 |
+| `.data` | 764 | 764 |
+| `.bss` (RAM) | 58,904 | 58,904 |
+| Flash linker extent | 355,296 | 347,264 |
+| Remaining budget | 103,454 | 111,486 |
+
+Both builds use Rust 1.99.1, the same paths, lockfile, default release profile,
+and firmware revision `baebbf4a18d4369e8debfb3799ce9c8b734e8a7b`.
+The change removes exactly 8,032 bytes of `.rodata`.
+Compared with the preceding 355,264-byte build without fixed scale, the combined reduction is 8,000 bytes.
+Fixing the scale adds 48 bytes of code and changes alignment.
+Static RAM is unchanged.
+Without `SLINT_SCALE_FACTOR`, a verification build remains exactly 355,264 bytes, matching the preceding compiler.
+
+To enable the optimization for the fixed-density KM003C display:
+
+```sh
+SLINT_SCALE_FACTOR=1 cargo +1.99.1 rustc --release --locked \
+  --config /tmp/local-slint.toml -- -C link-arg=-Map=/tmp/font-pruned.map
+```
+
+The compiler regression test covers constant and mutable sizes, unspecified and zero sizes, explicit 12 px, fixed scale 2, and runtime scale changes.
+It compares every retained 14 px glyph's bitmap, bearings, dimensions, and advance by Unicode code point against a compilation that retains both sizes.
+The Linux test command uses the existing fontconfig dynamic-loading feature:
+
+```sh
+cargo test --locked -p i-slint-compiler \
+  --features renderer-software,i-slint-common/fontconfig-dlopen \
+  --test embedded_font_sizes
+```
+
+All six regression tests pass.
+The complete compiler library and integration test run also passes: 367 tests, none failed or filtered.
+
+```sh
+cargo test --locked -p i-slint-compiler \
+  --features renderer-software,rust,i-slint-common/fontconfig-dlopen --lib --tests
+```
+
+A repeated final firmware build has the same 347,264-byte extent.
+ELFs need not be byte-identical: the embedder assigns glyph indices from unordered character coverage before sorting the character map.
+The glyph comparison therefore follows Unicode code points rather than comparing storage indices.
+
+### Further Reachability Work
+
+A disposable experiment removed the generic `Flickable` downcasts and scrolling helper.
+On the initial font-pruned build, extent fell from 347,232 to 333,440 bytes.
+This is a diagnostic reachability measurement, not a usable optimization: removing those helpers breaks scrolling and focus visibility.
+All diagnostic edits were restored before publication.
+The final fixed-scale build has different code size, so this delta must not be added to its result as a promised saving.
+
+A future refactor must allow type checks without retaining the full item vtable,
+while preserving successful downcasts, pinning, item lifetime safety, and C++ ABI.
+That work remains unimplemented and unvalidated.
+The measured font change does not modify item dispatch or scrolling.
+Device rendering, stack usage, and PD timing have not been tested on hardware.
