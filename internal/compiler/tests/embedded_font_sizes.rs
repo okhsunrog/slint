@@ -79,11 +79,9 @@ fn fixed_sizes_omit_unused_default_and_preserve_glyphs() {
         let a = &font.glyphs.iter().find(|g| g.pixel_size == 14).unwrap().glyph_data;
         let b = &reference.glyphs.iter().find(|g| g.pixel_size == 14).unwrap().glyph_data;
         assert_eq!(a.len(), b.len());
-        assert_eq!(font.character_map.len(), reference.character_map.len());
-        for (entry, reference_entry) in font.character_map.iter().zip(&reference.character_map) {
-            assert_eq!(entry.code_point, reference_entry.code_point);
-            let a = &a[entry.glyph_index as usize];
-            let b = &b[reference_entry.glyph_index as usize];
+        assert_eq!(font.character_map, reference.character_map);
+        assert_eq!(a.len(), font.character_map.len());
+        for (a, b) in a.iter().zip(b) {
             assert_eq!(
                 (a.x, a.y, a.width, a.height, a.x_advance, &a.data),
                 (b.x, b.y, b.width, b.height, b.x_advance, &b.data)

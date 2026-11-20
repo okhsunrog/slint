@@ -2272,7 +2272,7 @@ dependencies = [
  "i-slint-renderer-skia",
  "i-slint-renderer-software",
  "imgref",
- "itertools 0.15.0",
+ "itertools",
  "lyon_path",
  "muda",
  "objc2 0.6.5",
@@ -2394,6 +2394,7 @@ dependencies = [
  "scopeguard",
  "skrifa",
  "slab",
+ "static_assertions",
  "strum",
  "swash",
  "sys-locale",
@@ -5313,6 +5314,13 @@ dependencies = [
  "spin_on",
  "tempfile",
  "test_driver_lib",
+]
+
+[[package]]
+name = "test-gradient-math"
+version = "1.19.0"
+dependencies = [
+ "i-slint-core",
 ]
 
 [[package]]
