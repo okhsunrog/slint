@@ -5,8 +5,13 @@ The focus-tracking change reduces flash section bytes by 82,196 on stable Rust.
 The resulting image links with the original flash limit and retains the firmware's panic/recovery handler.
 
 The follow-up sections below record additional measurements.
-With disabled-metrics elimination, fixed-scale font pruning, and exact integer arithmetic, the latest Slint-only flash extent is 347,168 bytes, leaving 111,582 bytes.
+With disabled-metrics elimination, fixed-scale font pruning, and exact integer arithmetic, the earlier Slint-only flash extent was 347,168 bytes, leaving 111,582 bytes.
 Font pruning requires `SLINT_SCALE_FACTOR=1` for this firmware; without a fixed scale, the compiler preserves the fallback size.
+
+The latest measured combination occupies 332,544 bytes, leaving 126,206 bytes of flash.
+It includes the Flickable registration refactor, USB PD 3.1.0, the local uom-ng constant-reciprocal fix, and the RGB565 BE firmware path.
+The external dependency and firmware patches remain local; the ordinary firmware lockfile alone does not reproduce this result.
+See the follow-up sections for controlled comparisons and validation limits.
 
 ## Revisions and Configuration
 
@@ -299,9 +304,9 @@ This is a diagnostic reachability measurement, not a usable optimization: removi
 All diagnostic edits were restored before publication.
 The final fixed-scale build has different code size, so this delta must not be added to its result as a promised saving.
 
-A future refactor must allow type checks without retaining the full item vtable,
-while preserving successful downcasts, pinning, item lifetime safety, and C++ ABI.
-That work remains unimplemented and unvalidated.
+The later Flickable follow-up below removes these retention paths by registering operations from item initialization.
+It preserves the existing downcast mechanism, pinning, item lifetime safety, and C++ vtable layout.
+It does not implement a general replacement for vtable-based type identity.
 The measured font change does not modify item dispatch or scrolling.
 Device rendering, stack usage, and PD timing have not been tested on hardware.
 
@@ -551,3 +556,57 @@ All eight software-renderer unit tests pass, including RGB565 BE conversion and 
 All 29 driver tests pass, including the asymmetric-tile test for all four rotations.
 No device timing or visual validation was performed, and the change does not add TE synchronization.
 The firmware patch remains local; only this report was published to the Slint fork.
+
+## Flickable Operations Registered During Initialization
+
+Generic focus traversal previously referenced the Flickable vtable in two places:
+`is_visible_or_clipped_by_flickable` and `try_scroll_into_visible`.
+Those references retained the complete item implementation even when the application had no Flickable.
+
+`Flickable::init` now registers two function pointers for type checking and revealing a descendant.
+The generic traversal reads these operations from thread-local storage, without referencing a concrete item vtable.
+The no_std build uses Slint's existing single-threaded storage implementation.
+The final firmware ELF contains neither `FlickableVTable` nor Flickable implementation symbols.
+Before this change, the 48-byte vtable retained a 1,440-byte input-event entry point and a 788-byte input-filter entry point, among other code.
+The shared double-precision helpers remain; this change does not eliminate all f64 arithmetic.
+
+Registration precedes user bindings and initialization code in the Rust generator, C++ generator, and interpreter.
+Before registration, the type query returns false and reveal requests do nothing; the thread has no initialized Flickable yet.
+The functions hold no item references, so they remain usable after an individual item tree is destroyed.
+Every call still uses the existing checked downcast before accessing Flickable properties.
+No new unsafe code, vtable fields, C++ ABI changes, or alternative type identifiers are introduced.
+The scrolling algorithm and ancestor traversal are unchanged.
+This is a focused registration refactor, not a general redesign of `vtable`.
+
+Measurements use the preceding RGB565 BE firmware, the same USB PD and uom-ng patch, and the same stable compiler and release configuration.
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| `.text` | 279,056 | 266,280 |
+| `.rodata` | 63,188 | 62,436 |
+| `.data` | 764 | 764 |
+| `.bss` | 59,416 | 59,424 |
+| Flash extent | 346,080 | 332,544 |
+| Remaining budget | 112,670 | 126,206 |
+
+The measured saving is 13,536 bytes of flash extent, at a cost of eight bytes of static RAM.
+Applications that use Flickable still retain its implementation and perform indirect calls through the registered functions during focus traversal.
+No device timing improvement is claimed.
+
+The ARM release build passes with the original flash limit.
+The unfiltered Rust test driver passes 850 tests, with 11 ignored and none failed.
+All 22 C++ cases selected by `SLINT_TEST_FILTER=flickable` pass.
+These cover nested scrolling, clipped focus navigation, pointer input, and scroll animations.
+The new lifecycle test exercises focus before the first Flickable, focus from user initialization, and repeated creation and destruction.
+Its Rust weak-reference assertion confirms that registration does not retain the destroyed item tree.
+No hardware validation was performed.
+
+Run the test drivers sequentially because they share generated files and build artifacts:
+
+```sh
+cargo test --locked --manifest-path tests/Cargo.toml -p test-driver-rust --no-default-features
+SLINT_TEST_FILTER=flickable cargo test --locked --manifest-path tests/Cargo.toml -p test-driver-cpp --no-default-features
+```
+
+The recorded host runs disable incremental compilation and test debug information to limit disk use.
+The C++ run uses the installed fontconfig runtime through local pkg-config metadata, as in the earlier Rust validation.

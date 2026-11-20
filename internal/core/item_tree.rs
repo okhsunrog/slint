@@ -20,6 +20,18 @@ use core::ops::ControlFlow;
 use core::pin::Pin;
 use vtable::*;
 
+// Registering these operations from Flickable::init keeps generic focus traversal
+// from retaining the Flickable vtable in applications without scrollable items.
+pub(crate) struct FlickableFunctions {
+    pub is_flickable: fn(&ItemRc) -> bool,
+    pub reveal: fn(&ItemRc, &mut [LogicalPoint; 2], ScrollBehavior),
+}
+
+crate::thread_local! {
+    pub(crate) static FLICKABLE_FUNCTIONS: core::cell::Cell<Option<&'static FlickableFunctions>>
+        = const { core::cell::Cell::new(None) };
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 /// A range of indices
@@ -507,7 +519,7 @@ impl ItemRc {
                             geometry,
                         ))
                 {
-                    if ancestor.downcast::<crate::items::Flickable>().is_some()
+                    if FLICKABLE_FUNCTIONS.with(|f| f.get().is_some_and(|f| (f.is_flickable)(&ancestor)))
                         && ancestor.is_visible_or_clipped_by_flickable()
                     {
                         return true;
@@ -1173,21 +1185,14 @@ impl ItemRc {
         geo: LogicalRect,
         scroll_behavior: ScrollBehavior,
     ) {
+        let Some(functions) = FLICKABLE_FUNCTIONS.with(|f| f.get()) else { return };
         let supports_transformations = self
             .window_adapter()
             .is_none_or(|adapter| adapter.renderer().supports_transformations());
         let mut points = [geo.min(), geo.max()];
         let mut current = self.clone();
         while let Some(parent) = current.parent_item(ParentItemTraversalMode::StopAtPopups) {
-            if let Some(flickable) =
-                vtable::VRef::downcast_pin::<crate::items::Flickable>(parent.borrow())
-            {
-                let offset =
-                    LogicalVector::from_lengths(flickable.content_x(), flickable.content_y());
-                let content_points = points.map(|p| p - offset);
-                let target = flickable.reveal_points(&parent, &content_points, scroll_behavior);
-                points = content_points.map(|p| p + target);
-            }
+            (functions.reveal)(&parent, &mut points, scroll_behavior);
             let step = parent.step_transform(supports_transformations);
             points = points.map(|p| step.transform_point(p.cast()).cast());
             current = parent;
