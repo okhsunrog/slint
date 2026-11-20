@@ -450,3 +450,75 @@ A separate build with registry Slint 1.18.1 and the firmware's default scale sti
 The ordinary firmware lockfile retains registry Slint; the successful measurement uses the local Slint patch configuration described above.
 The migration patch contains only the firmware manifest, lockfile, and PD adapter changes.
 Device negotiation, GoodCRC timing, and recovery behavior require hardware validation after this stack upgrade.
+
+### Root Cause of the Size Increase and Retained Double Conversion
+
+The migration's size increase has two distinct causes: new protocol behavior and incomplete compile-time evaluation in uom-ng.
+Named symbol differences locate the main contributors before fixing uom-ng:
+
+| Symbol | usbpd 2.0.0 | usbpd 3.1.0 | Increase |
+| --- | ---: | ---: | ---: |
+| Sink `update_state` future poll | 7,952 | 11,096 | 3,144 |
+| `uom::fraction::Fraction::recip` | 0 | 1,800 | 1,800 |
+| `wait_for_good_crc` future poll | 476 | 1,160 | 684 |
+| `receive_message_inner` future poll | 1,624 | 1,868 | 244 |
+| PD task static pool (RAM) | 2,192 | 3,184 | 992 |
+
+These symbols do not partition the entire binary; LTO and outlining share code among functions.
+The PD task pool accounts for the entire measured static RAM increase.
+Version 3.1.0 adds a two-message receive queue and acknowledges incoming messages while awaiting GoodCRC.
+Version 2.0.0 instead returns an error for an unexpected message in that path.
+The new queue and async control flow are functional changes, not unused UI code to remove.
+
+In uom-ng 0.39.0, `system.rs::from_base` evaluates `conversion_factor` in a `const` block but calls `factor.recip()` outside it.
+Being declared `const fn` does not force a call to execute at compile time.
+In this firmware's `z` profile, the reciprocal remains a runtime operation on a 128-bit fraction.
+The optimizer also retains the fallback coefficient conversions through `Ratio::from_f64`.
+
+A standalone no_std ARM executable reproduces the profile difference with unmodified uom-ng.
+It converts a black-box u32 voltage to millivolts, uses fat LTO and one codegen unit, and is not flashed to hardware.
+With `opt-level="z"`, llvm-size reports 4,250 text bytes and retains `Ratio::from_f64`.
+With `opt-level=3`, it reports 52 text bytes and has no rational-conversion symbols.
+These are minimal-executable sizes, not firmware savings.
+This explains why the upstream PR's `3` profile can eliminate the conversion while this firmware's `z` profile retains it.
+With the constant-reciprocal fix, the same probe at `z` shrinks to 40 text bytes and also has no rational-conversion symbols.
+
+The local fix moves the reciprocal into the same constant evaluation:
+
+```rust
+if let Some(factor) = const {
+    match conversion_factor::<D, U, V, N>() {
+        Some(factor) => factor.recip(),
+        None => None,
+    }
+} {
+    if let Some(v) = V::T::scale(v, factor.numer, factor.denom) {
+        return v;
+    }
+}
+```
+
+The original runtime fallback below this block is unchanged.
+No float precision, unit conversion algorithm, feature, or PD behavior is changed.
+
+| Same Local uom-ng Path | Original 0.39.0 | Constant Reciprocal |
+| --- | ---: | ---: |
+| `.text` | 284,608 | 279,192 |
+| `.rodata` | 64,660 | 63,220 |
+| `.data` | 764 | 764 |
+| `.bss` | 59,896 | 59,896 |
+| Flash extent | 353,088 | 346,240 |
+| Remaining budget | 105,662 | 112,510 |
+
+The controlled saving is 6,848 bytes of extent, or 6,856 section bytes.
+The 384-byte difference between the registry and local uom-ng baseline must not be attributed to the fix.
+The fixed ELF has no `num_rational` symbols and no `Fraction::recip` symbol.
+The remaining double helpers are retained by independent Slint/libm callers.
+The PD task pool remains 3,184 bytes, preserving the new protocol behavior.
+
+Boundary tests for volt/millivolt conversions pass, including truncation, values above f32's exact-integer range, and the largest non-overflowing u32 inputs.
+The uom-ng `si,u32` library suite is not green: both unmodified and patched 0.39.0 pass 178 tests and fail the same 116 tests.
+The baseline was built independently; there are no newly failing test names.
+These existing integer-unit test failures must not be reported as a passing full suite.
+The minimal patch and reproduction sources are retained separately; no changes to an external uom-ng repository were published.
+The firmware's ordinary lockfile was restored after the measurement; using the fix requires selecting the patched uom-ng source.
