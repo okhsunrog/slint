@@ -2062,7 +2062,7 @@ impl ProcessScene for PrepareScene {
                     (texture_data.byte_stride / texture_data.pixel_format.bpp()) as u16;
                 self.vectors.textures.push(SceneTexture {
                     data: texture_data.data,
-                    format: texture_data.pixel_format,
+                    format: scene::SceneTextureFormat::Plain(texture_data.pixel_format),
                     pixel_stride,
                     extra,
                 });
@@ -2504,7 +2504,8 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
                         };
 
                         let data = match &glyph.alpha_map {
-                            fonts::GlyphAlphaMap::Static(data) => {
+                            fonts::GlyphAlphaMap::Static(data)
+                            | fonts::GlyphAlphaMap::Compact { bytes: data } => {
                                 if glyph.sdf {
                                     let geometry = clipped_target.translate(offset).round();
                                     let origin =
@@ -2542,7 +2543,9 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
                                     let texture = SceneTexture {
                                         data,
                                         pixel_stride,
-                                        format: TexturePixelFormat::SignedDistanceField,
+                                        format: scene::SceneTextureFormat::Plain(
+                                            TexturePixelFormat::SignedDistanceField,
+                                        ),
                                         extra: SceneTextureExtra {
                                             colorize: color,
                                             // color already is mixed with global alpha
@@ -2598,7 +2601,25 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
                             tiling: None,
                         };
 
-                        self.processor.process_target_texture(&t, clipped_target.cast());
+                        if i_slint_core::graphics::BitmapGlyph::COMPACT_ALPHA
+                            && let fonts::GlyphAlphaMap::Compact { bytes } = glyph.alpha_map
+                        {
+                            if let Some((extra, geometry)) =
+                                SceneTextureExtra::from_target_texture(&t, &clipped_target.cast())
+                            {
+                                self.processor.process_scene_texture(
+                                    geometry,
+                                    SceneTexture {
+                                        data: bytes,
+                                        format: scene::SceneTextureFormat::CompactAlpha,
+                                        pixel_stride: glyph.pixel_stride,
+                                        extra,
+                                    },
+                                );
+                            }
+                        } else {
+                            self.processor.process_target_texture(&t, clipped_target.cast());
+                        }
                     }
                     core::ops::ControlFlow::Continue(())
                 },

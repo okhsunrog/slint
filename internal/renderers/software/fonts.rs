@@ -18,6 +18,10 @@ i_slint_core::thread_local! {
 #[derive(derive_more::From, Clone)]
 pub enum GlyphAlphaMap {
     Static(&'static [u8]),
+    #[from(skip)]
+    Compact {
+        bytes: &'static [u8],
+    },
     Shared(Rc<[u8]>),
 }
 

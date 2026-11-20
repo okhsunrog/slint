@@ -21,8 +21,19 @@ pub struct BitmapGlyph {
     /// This is a fixed point number that is shifted by 6 bits
     pub x_advance: i16,
     /// The 8-bit alpha map that's to be blended with the current text color
-    /// or 8-bit signed distance field depending on `BitmapFont::sdf`
+    /// or 8-bit signed distance field depending on `BitmapFont::sdf`.
+    /// With compact bitmap glyphs enabled, a shorter alpha slice uses the compact glyph format.
     pub data: Slice<'static, u8>,
+}
+
+impl BitmapGlyph {
+    #[doc(hidden)]
+    pub const COMPACT_ALPHA: bool = cfg!(feature = "compact-bitmap-glyphs");
+
+    #[doc(hidden)]
+    pub fn has_compact_alpha(&self) -> bool {
+        Self::COMPACT_ALPHA && self.data.len() < self.width as usize * self.height as usize
+    }
 }
 
 #[repr(C)]

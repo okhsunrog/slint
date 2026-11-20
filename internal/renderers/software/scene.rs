@@ -240,7 +240,8 @@ impl Scene {
                 let texture = &self.vectors.textures[*texture_index as usize];
                 // Below alpha 255 an RGB texture blends rather than overwrites (see
                 // draw_texture_line), so it is not opaque.
-                texture.format == TexturePixelFormat::Rgb && texture.extra.alpha == 255
+                texture.format == SceneTextureFormat::Plain(TexturePixelFormat::Rgb)
+                    && texture.extra.alpha == 255
             }
             SceneCommand::SharedBuffer { shared_buffer_index } => {
                 let buffer = &self.vectors.shared_buffers[*shared_buffer_index as usize];
@@ -312,10 +313,29 @@ pub enum SceneCommand {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum SceneTextureFormat {
+    Plain(TexturePixelFormat),
+    CompactAlpha,
+}
+
+impl SceneTextureFormat {
+    pub fn pixel_format(self) -> TexturePixelFormat {
+        match self {
+            Self::Plain(format) => format,
+            Self::CompactAlpha => TexturePixelFormat::AlphaMap,
+        }
+    }
+
+    pub fn is_compact(self) -> bool {
+        i_slint_core::graphics::BitmapGlyph::COMPACT_ALPHA && self == Self::CompactAlpha
+    }
+}
+
 pub struct SceneTexture<'a> {
-    /// This should have a size so that the entire slice is ((height - 1) * pixel_stride + width) * bpp
+    /// Pixel data in the storage format, including the coverage index for compact glyphs.
     pub data: &'a [u8],
-    pub format: TexturePixelFormat,
+    pub(super) format: SceneTextureFormat,
     /// number of pixels between two lines in the source
     pub pixel_stride: u16,
 
@@ -324,11 +344,15 @@ pub struct SceneTexture<'a> {
 
 impl<'a> SceneTexture<'a> {
     pub fn source_size(&self) -> PhysicalSize {
-        let mut len = self.data.len();
-        if self.format == TexturePixelFormat::SignedDistanceField {
+        let mut len = if self.format.is_compact() {
+            i_slint_common::compact_glyph::pixel_count(self.data)
+        } else {
+            self.data.len()
+        };
+        if self.format == SceneTextureFormat::Plain(TexturePixelFormat::SignedDistanceField) {
             len -= 1;
         } else {
-            len /= self.format.bpp();
+            len /= self.format.pixel_format().bpp();
         }
         let stride = self.pixel_stride as usize;
         let h = len / stride;
@@ -350,7 +374,7 @@ impl<'a> SceneTexture<'a> {
             Self {
                 data: source.data,
                 pixel_stride: (source.byte_stride / source.pixel_format.bpp()) as u16,
-                format: source.pixel_format,
+                format: SceneTextureFormat::Plain(source.pixel_format),
                 extra,
             },
             geometry,
@@ -474,27 +498,27 @@ impl SharedBufferCommand {
             SharedBufferData::SharedImage(SharedImageBuffer::RGB8(b)) => SceneTexture {
                 data: &b.as_bytes()[start * 3..end * 3],
                 pixel_stride: stride as u16,
-                format: TexturePixelFormat::Rgb,
+                format: SceneTextureFormat::Plain(TexturePixelFormat::Rgb),
                 extra: self.extra,
             },
             SharedBufferData::SharedImage(SharedImageBuffer::RGBA8(b)) => SceneTexture {
                 data: &b.as_bytes()[start * 4..end * 4],
                 pixel_stride: stride as u16,
-                format: TexturePixelFormat::Rgba,
+                format: SceneTextureFormat::Plain(TexturePixelFormat::Rgba),
                 extra: self.extra,
             },
             SharedBufferData::SharedImage(SharedImageBuffer::RGBA8Premultiplied(b)) => {
                 SceneTexture {
                     data: &b.as_bytes()[start * 4..end * 4],
                     pixel_stride: stride as u16,
-                    format: TexturePixelFormat::RgbaPremultiplied,
+                    format: SceneTextureFormat::Plain(TexturePixelFormat::RgbaPremultiplied),
                     extra: self.extra,
                 }
             }
             SharedBufferData::AlphaMap { data, width } => SceneTexture {
                 data: &data[start..end],
                 pixel_stride: *width,
-                format: TexturePixelFormat::AlphaMap,
+                format: SceneTextureFormat::Plain(TexturePixelFormat::AlphaMap),
                 extra: self.extra,
             },
         }
