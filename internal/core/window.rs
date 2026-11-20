@@ -647,7 +647,7 @@ pub struct WindowInner {
     /// When the window is visible, keep a strong reference
     strong_component_ref: RefCell<Option<ItemTreeRc>>,
     mouse_input_state: Cell<MouseInputState>,
-    touch_state: RefCell<TouchState>,
+    touch_state: RefCell<Option<TouchState>>,
 
     /// ItemRC that currently have the focus (possibly an instance of TextInput)
     pub focus_item: RefCell<crate::item_tree::ItemWeak>,
@@ -1221,7 +1221,11 @@ impl WindowInner {
         position: LogicalPoint,
         phase: TouchPhase,
     ) -> Option<MouseDispatchResult> {
-        let events = self.touch_state.borrow_mut().process(id, position, phase);
+        let events = self
+            .touch_state
+            .borrow_mut()
+            .get_or_insert_with(TouchState::default)
+            .process(id, position, phase);
         let mut aggregate: Option<MouseDispatchResult> = None;
         for event in events.into_iter() {
             if let Some(r) = self.process_mouse_input(event) {
