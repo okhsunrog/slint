@@ -1,5 +1,8 @@
 # KM003C Flash Size Investigation
 
+On Slint 1.19.0 with stable Rust 1.99.1 the optimized firmware occupies **320,352 bytes**, leaving **138,398 bytes** in the application partition.
+The last section compares the 1.19 release, the port, and the previous 1.18.1 measurements.
+
 Measured on October 29, 2026, with the unchanged KM003C UI and peripherals.
 The focus-tracking change reduces flash section bytes by 82,196 on stable Rust.
 The resulting image links with the original flash limit and retains the firmware's panic/recovery handler.
@@ -8,7 +11,7 @@ The follow-up sections below record additional measurements.
 With disabled-metrics elimination, fixed-scale font pruning, and exact integer arithmetic, the earlier Slint-only flash extent was 347,168 bytes, leaving 111,582 bytes.
 Font pruning requires `SLINT_SCALE_FACTOR=1` for this firmware; without a fixed scale, the compiler preserves the fallback size.
 
-The latest measured combination occupies 298,720 of 458,750 bytes, leaving 160,030 bytes of flash.
+The optimized Slint 1.18.1 image occupies 298,720 of 458,750 bytes, leaving 160,030 bytes of flash.
 It includes keyboard event dispatch specialization, lazy touch initialization, compact bitmap glyphs, exact integer comparisons, gradient math registration, USB PD 3.1.0, the local uom-ng fix, and RGB565 BE.
 The external dependency and firmware patches remain local; the ordinary firmware lockfile alone does not reproduce this result.
 See the follow-up sections for controlled comparisons and validation limits.
@@ -941,3 +944,86 @@ The codec round-trip test, 340 core tests (including 23 touch cases), and 367 co
 The text screenshot suite with embedded assets and compact glyphs passed 15 cases, with one ignored.
 The C++ software-renderer crate checked successfully and a C++20 translation unit including its generated platform headers compiled.
 The unfiltered Rust driver passed 851 tests with 11 ignored on the host without Qt installed.
+
+## Port to Slint 1.19.0
+
+The release control is tag `v1.19.0` at `e436f546f71481d786cbc2a74316b1be1ef678c1`.
+The port starts from the changes through `c3fb229c2d4b31a615f9fa4efa8cad03546c9a5f` on the 1.18 branch.
+All 1.19 flash measurements use firmware `baebbf4a18d4369e8debfb3799ce9c8b734e8a7b`, USB PD 3.1.0, the uom-ng 0.39.0 reciprocal fix and the native RGB565 BE tile.
+The firmware and Slint build dependency both select 1.19.0.
+Slint's updated dependencies required a new firmware lockfile, SHA-256 `7936065d94d16dafab464fd51a97b2b58143ca5906de35b76cbe898cb0af1a82`.
+The lock, absolute source paths, and scale factor 1 are constant across the 1.19 comparisons.
+The main table uses Rust 1.99.1, `thumbv7em-none-eabihf`, `opt-level="z"`, fat LTO, one codegen unit and the original memory map and panic handler.
+
+| Firmware | Flash extent | Free flash | `.text` | `.rodata` | `.data` | `.bss` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Previous optimized 1.18.1, packed | 298,720 | 160,030 | 237,780 | 57,116 | 764 | 59,436 |
+| Stock 1.19.0 | 410,784 | 47,966 | 330,372 | 76,572 | 780 | 59,416 |
+| Port through keyboard dispatch | 326,144 | 132,606 | 261,860 | 60,444 | 780 | 59,432 |
+| Add lazy touch initialization | 326,016 | 132,734 | 261,724 | 60,444 | 780 | 59,432 |
+| Port bitmap code, feature off | 326,112 | 132,638 | 261,820 | 60,444 | 780 | 59,432 |
+| Port bitmap code, feature on | 325,088 | 133,662 | 262,412 | 58,812 | 780 | 59,432 |
+| Adapt gradient geometry, raw glyphs | 321,376 | 137,374 | 257,372 | 60,160 | 780 | 59,436 |
+| Adapt gradient geometry, compact glyphs | **320,352** | **138,398** | **257,964** | **58,528** | **780** | **59,436** |
+
+Upstream 1.19 already tracks the position of a focused text input through a callback registered by the item.
+The port uses that implementation.
+The Flickable callback preserves the new rectangle reveal algorithm, including nested transforms and the scroll behavior argument.
+Synthetic drag and touch events retain the 1.19 event timestamp and pointer history semantics.
+
+Version 1.19 uses `line_for_angle` and `sin_cos` for linear gradient geometry.
+The embedded Rust gradient constructor now retains that exact implementation when a gradient is created.
+In the packed firmware this removes 4,736 flash bytes, including the 2,376-byte `rem_pio2f` and 500-byte `sincosf` functions, at a cost of four bytes of BSS.
+FFI and desktop builds call the geometry function directly.
+
+The optimized 1.19 image uses 21,632 more bytes than optimized 1.18.1.
+The text section accounts for 20,184 bytes of the increase.
+The union of linked text-symbol ranges whose demangled names contain `i_slint_renderer_software` grows from 44,780 to 63,682 bytes.
+This groups named functions after LTO, so inlining and renaming affect the attribution.
+For example, the linked rectangle processor grows from 3,024 to 4,044 bytes, and 1.19 retains scan-line commands for radial and conic gradients and rounded clips.
+The compact glyph decoder occupies 140 bytes in both versions.
+
+Of 98 glyphs, 75 selected packed storage, reducing the payload from 7,720 to 5,938 bytes with exact 8-bit coverage.
+The 1.19 font option saves 1,024 linked flash bytes.
+Raw, packed, and stock 1.19 produced the same eight RGB565 BE frames, SHA-256 `bee282a0f9b833a600697a535c36c4025c0cc1e52e33ceb625ac8fded7b4d50a`.
+The probe checks both firmware pages, all four rotations and both full-buffer and scan-line rendering.
+Each 1.19 frame differed from its 1.18.1 counterpart at 52 of 57,600 pixels, including with the unmodified release.
+
+ARM disassembly still shows double-precision helpers in the rectangle processor.
+It calls `__aeabi_f2d`, `__aeabi_dadd`, `__aeabi_d2f` and, through an outlined block, `__aeabi_dmul`.
+The gradient change removes the trigonometric argument reduction; it does not remove every double operation in the renderer.
+
+### Compiler profiles on the final 1.19 port
+
+All profiles below select compact glyphs and use the same firmware lock and original flash region.
+The LLD maps of rejected links record the overflows.
+The nightly is the same official October 29 toolchain used in the previous compiler comparison, rustc 1.101.0-nightly (`92ffebece`).
+All successful profiles retain the firmware panic handler.
+
+| Profile | Flash extent | Free flash |
+| --- | ---: | ---: |
+| Stable, z, fat LTO, 1 CGU | 320,352 | 138,398 |
+| Stable, s | 372,352 | 86,398 |
+| Stable, thin LTO | 343,456 | 115,294 |
+| Stable, 16 CGUs | 323,328 | 135,422 |
+| Stable, Cortex-M4 | 320,032 | 138,718 |
+| Stable, 2 | 518,592 | −59,842 |
+| Stable, 3 | 530,304 | −71,554 |
+| Nightly, z | 320,736 | 138,014 |
+| Nightly, z with `-Z build-std=core,alloc` | **315,488** | **143,262** |
+
+The software font check compares raw and packed rendering on an x86-64 Linux host.
+Each release binary rendered 4,800 full meter-page frames by line, cycling through all four rotations.
+Across 12 alternating pairs, median process CPU time per frame was 63.8 µs with raw glyphs and 77.5 µs with compact glyphs.
+The median paired increase was 24.5%.
+Hardware frame time, power, PD timing, peak heap and stack use remain unmeasured.
+
+
+### Port validation
+
+The unfiltered Rust driver passed 1,117 tests with 13 ignored; 517 compiler and 459 core tests passed.
+The focus lifecycle test advances the mock clock before checking the final scroll offset because 1.19 animates focus reveal.
+The embedded text screenshot suite passed 18 tests with five ignored.
+The stock shared-bitmap test passed with compact glyphs enabled, including its comparison with a static signed distance field font.
+The codec round-trip, window touch probe, disabled and enabled embedded metrics tests, and gradient geometry tests under std, no_std and FFI also passed.
+The C++ software-renderer crate checked successfully and a C++20 translation unit including its generated platform headers compiled.
