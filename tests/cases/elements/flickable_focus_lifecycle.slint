@@ -38,6 +38,7 @@ assert!(plain.get_focused());
 for _ in 0..3 {
     let scrolled = TestCase::new().unwrap();
     assert!(scrolled.get_focused());
+    slint_testing::mock_elapsed_time(2000);
     assert_eq!(scrolled.get_offset(), -220.);
     let weak = slint::ComponentHandle::as_weak(&scrolled);
     drop(scrolled);
@@ -55,6 +56,7 @@ for (int i = 0; i < 3; ++i) {
     {
         auto scrolled = TestCase::create();
         assert(scrolled->get_focused());
+        slint_testing::mock_elapsed_time(2000);
         assert_eq(scrolled->get_offset(), -220.);
     }
     plain->invoke_take_focus();
