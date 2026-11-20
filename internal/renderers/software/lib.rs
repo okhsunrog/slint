@@ -2223,7 +2223,7 @@ impl ProcessScene for PrepareScene {
                     geometry,
                     SceneTexture {
                         data: texture_data.data,
-                        format: texture_data.pixel_format,
+                        format: scene::SceneTextureFormat::Plain(texture_data.pixel_format),
                         pixel_stride,
                         extra,
                     },
@@ -2849,7 +2849,9 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
                                     SceneTexture {
                                         data,
                                         pixel_stride,
-                                        format: TexturePixelFormat::SignedDistanceField,
+                                        format: scene::SceneTextureFormat::Plain(
+                                            TexturePixelFormat::SignedDistanceField,
+                                        ),
                                         extra,
                                     },
                                     &self.rounded_clips,
@@ -2877,7 +2879,8 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
                         continue;
                     }
                     let data = match &glyph.alpha_map {
-                        fonts::GlyphAlphaMap::Static(data) => {
+                        fonts::GlyphAlphaMap::Static(data)
+                        | fonts::GlyphAlphaMap::Compact(data) => {
                             target_pixel_buffer::TextureDataContainer::Static(
                                 target_pixel_buffer::TextureData::new(
                                     data,
@@ -2916,11 +2919,30 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
                         tiling: None,
                     };
 
-                    self.processor.process_target_texture(
-                        &t,
-                        clipped_target.cast(),
-                        &self.rounded_clips,
-                    );
+                    if i_slint_core::graphics::COMPACT_BITMAP_GLYPHS
+                        && let fonts::GlyphAlphaMap::Compact(bytes) = glyph.alpha_map
+                    {
+                        if let Some((extra, geometry)) =
+                            SceneTextureExtra::from_target_texture(&t, &clipped_target.cast())
+                        {
+                            self.processor.process_scene_texture(
+                                geometry,
+                                SceneTexture {
+                                    data: bytes,
+                                    pixel_stride: glyph.pixel_stride,
+                                    format: scene::SceneTextureFormat::CompactAlpha,
+                                    extra,
+                                },
+                                &self.rounded_clips,
+                            );
+                        }
+                    } else {
+                        self.processor.process_target_texture(
+                            &t,
+                            clipped_target.cast(),
+                            &self.rounded_clips,
+                        );
+                    }
                 }
                 core::ops::ControlFlow::Continue(())
             },

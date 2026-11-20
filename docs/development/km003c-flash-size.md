@@ -8,8 +8,8 @@ The follow-up sections below record additional measurements.
 With disabled-metrics elimination, fixed-scale font pruning, and exact integer arithmetic, the earlier Slint-only flash extent was 347,168 bytes, leaving 111,582 bytes.
 Font pruning requires `SLINT_SCALE_FACTOR=1` for this firmware; without a fixed scale, the compiler preserves the fallback size.
 
-The latest measured combination occupies 300,128 bytes, leaving 158,622 bytes of flash.
-It includes keyboard event dispatch specialization, exact integer comparisons, gradient math registration, USB PD 3.1.0, the local uom-ng fix, and RGB565 BE.
+The latest measured combination occupies 298,720 of 458,750 bytes, leaving 160,030 bytes of flash.
+It includes keyboard event dispatch specialization, lazy touch initialization, compact bitmap glyphs, exact integer comparisons, gradient math registration, USB PD 3.1.0, the local uom-ng fix, and RGB565 BE.
 The external dependency and firmware patches remain local; the ordinary firmware lockfile alone does not reproduce this result.
 See the follow-up sections for controlled comparisons and validation limits.
 
@@ -869,8 +869,8 @@ Encoding 87 glyphs reduced the combined payload to 5,361 bytes and recovered eve
 The 2,359-byte difference excludes metadata, decoder code, linker deduplication, and line-access costs.
 An alternative encoded each row independently with byte-aligned masks and a byte offset for each row after the first.
 It saved only 791 bytes of payload, including its row offsets, across 66 compressed glyphs.
-The pixel-font renderer currently exposes a contiguous alpha slice.
-A firmware implementation still needs an efficient way to access individual glyph rows.
+At this stage the pixel-font renderer required a contiguous alpha slice.
+The compact bitmap glyph experiment below adds indexed access and measures the complete firmware.
 
 A separate firmware experiment replaced the decimal measurement formatter with a fixed buffer and explicit digit extraction.
 It preserved the strings across all four units, precisions 1 through 3, boundary inputs, and 24,000 pseudorandom signed inputs.
@@ -890,3 +890,54 @@ The newer release costs 32 bytes of flash extent and removes the need to maintai
 It requires updating the USB PD workspace dependency to select 0.40.0.
 All 29 USB PD library tests pass against the registry release of uom-ng 0.40.0.
 The main table uses the original USB PD Git dependency and patched uom-ng 0.39.0.
+
+## Compact Bitmap Glyphs and Touch Initialization, November 20, 2026
+
+The control uses Slint `d07e357972f8bc49853e032c875140c31ba39387`, firmware `baebbf4a18d4369e8debfb3799ce9c8b734e8a7b`, and the button-input experiment's USB PD, uom-ng and RGB565 BE changes.
+All four images use stable Rust 1.99.1, the same local source paths, fixed scale 1 and the same dependency lock (SHA-256 `4afc9a9ca09ebda77b37bbb21be3cc461aeb3065bc1bc59e69e1c132acc33afc`).
+The flash extent includes alignment up to the final linker marker.
+
+| Firmware build | Flash extent | Free flash | `.text` | `.rodata` |
+| --- | ---: | ---: | ---: | ---: |
+| Control | 300,128 | 158,622 | 237,516 | 58,768 |
+| Lazy touch initialization alone | 300,032 | 158,718 | 237,416 | 58,768 |
+| Final code, compact glyphs off | 300,032 | 158,718 | 237,428 | 58,768 |
+| Final code, compact glyphs on | 298,720 | 160,030 | 237,780 | 57,116 |
+
+All four builds have 764 bytes of `.data`, 59,436 bytes of `.bss`, and 1,932 bytes of `.pd_fast`.
+The allocator request for the ARM software window remains 696 bytes.
+The control already omits touch event dispatch and gesture recognition for this button-driven backend.
+Its window still eagerly constructs `TouchState`, including a 52-byte out-of-line initializer.
+Moving initialization to the first touch removes 96 bytes of flash extent, preserves touch and gestures for other backends, and requires no first-touch heap allocation.
+A boxed variant reduced the window allocation by 96 bytes but cost another 32 bytes of flash in a separate comparison and needed an allocation on first touch.
+
+For the font experiment, add `"compact-bitmap-glyphs"` to the target `slint` dependency's existing feature list in `firmware/Cargo.toml`.
+Use the Rust generator and embed resources for the software renderer as in the firmware build.
+The compiler groups 32 pixels per coverage mask and keeps the original 8-bit alpha of every nonzero pixel.
+A per-group byte indexes those values directly, so clipping, rotations, and line rendering can sample any pixel without unpacking the whole glyph.
+The compiler keeps individual glyphs raw when packing would grow them or exceed the index limits.
+Signed distance fields keep their existing representation.
+Packed glyphs use the software blend path even on targets offering accelerated texture draws.
+
+At 14 px, 75 of the 98 glyphs select compact storage, reducing the alpha payload from 7,720 to 5,938 bytes.
+The largest glyph has 928 pixels, including 191 nonzero samples, and packs into 338 bytes.
+The font feature saves 1,312 flash bytes after accounting for the decoder, constant merging, and alignment.
+The source UI, characters, font metrics, and antialiasing are preserved.
+Every generated glyph's pixels and metrics were compared by Unicode character.
+The two-page firmware UI also produced identical RGB565 BE bytes using raw and packed glyphs, both by line and with a full framebuffer, at 0°, 90°, 180° and 270°.
+The eight test frames total 921,600 bytes and have SHA-256 `92900953bb2e2dcb05f5c18275d578c91c776cef2be2bd21dfbe261c46555f0d`.
+
+A separate host test dispatched two complete taps through a software window, left a third finger down, and repeated the taps on a new component using the same window adapter.
+The test observed the expected pressed state and click count in both components.
+
+The linked Cortex-M decoder is 140 bytes and computes the rank of a set bit within a 32-bit mask.
+A Linux x86-64 release benchmark redrew the meter page by line into RGB565 BE, cycling through the four rotations.
+Across 12 alternating pairs of 4,800 full redraws, the median CPU time per frame was 67.2 µs raw and 86.3 µs packed.
+The median paired increase was 29%.
+The comparison excludes display transfers and firmware measurement tasks.
+Frame time on the KM003C and peak stack use remain unmeasured.
+
+The codec round-trip test, 340 core tests (including 23 touch cases), and 367 compiler tests passed.
+The text screenshot suite with embedded assets and compact glyphs passed 15 cases, with one ignored.
+The C++ software-renderer crate checked successfully and a C++20 translation unit including its generated platform headers compiled.
+The unfiltered Rust driver passed 851 tests with 11 ignored on the host without Qt installed.

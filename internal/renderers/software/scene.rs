@@ -269,7 +269,7 @@ impl Scene {
                 let texture = &self.vectors.textures[*texture_index as usize];
                 // Below alpha 255 the texture blends rather than overwrites (see
                 // draw_texture_line), so it is not opaque.
-                let opaque_format = match texture.format {
+                let opaque_format = match texture.format.pixel_format() {
                     TexturePixelFormat::Rgb => true,
                     #[cfg(feature = "image-pixel-format-rgb565")]
                     TexturePixelFormat::Rgb565 => true,
@@ -378,10 +378,28 @@ pub enum SceneCommand {
     },
 }
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum SceneTextureFormat {
+    Plain(TexturePixelFormat),
+    CompactAlpha,
+}
+impl SceneTextureFormat {
+    pub fn pixel_format(self) -> TexturePixelFormat {
+        match self {
+            Self::Plain(format) => format,
+            Self::CompactAlpha => TexturePixelFormat::AlphaMap,
+        }
+    }
+
+    pub fn is_compact(self) -> bool {
+        i_slint_core::graphics::COMPACT_BITMAP_GLYPHS && self == Self::CompactAlpha
+    }
+}
+
 pub struct SceneTexture<'a> {
-    /// This should have a size so that the entire slice is ((height - 1) * pixel_stride + width) * bpp
+    /// Pixel bytes in the storage format, including the coverage index for compact glyphs.
     pub data: &'a [u8],
-    pub format: TexturePixelFormat,
+    pub(super) format: SceneTextureFormat,
     /// number of pixels between two lines in the source
     pub pixel_stride: u16,
 
@@ -390,11 +408,15 @@ pub struct SceneTexture<'a> {
 
 impl<'a> SceneTexture<'a> {
     pub fn source_size(&self) -> PhysicalSize {
-        let mut len = self.data.len();
-        if self.format == TexturePixelFormat::SignedDistanceField {
+        let mut len = if self.format.is_compact() {
+            i_slint_common::compact_glyph::pixel_count(self.data)
+        } else {
+            self.data.len()
+        };
+        if self.format.pixel_format() == TexturePixelFormat::SignedDistanceField {
             len -= 1;
         } else {
-            len /= self.format.bpp();
+            len /= self.format.pixel_format().bpp();
         }
         let stride = self.pixel_stride as usize;
         let h = len / stride;
@@ -416,7 +438,7 @@ impl<'a> SceneTexture<'a> {
             Self {
                 data: source.data,
                 pixel_stride: (source.byte_stride / source.pixel_format.bpp()) as u16,
-                format: source.pixel_format,
+                format: SceneTextureFormat::Plain(source.pixel_format),
                 extra,
             },
             geometry,
@@ -564,20 +586,20 @@ impl SharedBufferCommand {
             SharedBufferData::SharedImage(SharedImageBuffer::RGB8(b)) => SceneTexture {
                 data: &b.as_bytes()[start * 3..end * 3],
                 pixel_stride: stride as u16,
-                format: TexturePixelFormat::Rgb,
+                format: SceneTextureFormat::Plain(TexturePixelFormat::Rgb),
                 extra: self.extra,
             },
             SharedBufferData::SharedImage(SharedImageBuffer::RGBA8(b)) => SceneTexture {
                 data: &b.as_bytes()[start * 4..end * 4],
                 pixel_stride: stride as u16,
-                format: TexturePixelFormat::Rgba,
+                format: SceneTextureFormat::Plain(TexturePixelFormat::Rgba),
                 extra: self.extra,
             },
             SharedBufferData::SharedImage(SharedImageBuffer::RGBA8Premultiplied(b)) => {
                 SceneTexture {
                     data: &b.as_bytes()[start * 4..end * 4],
                     pixel_stride: stride as u16,
-                    format: TexturePixelFormat::RgbaPremultiplied,
+                    format: SceneTextureFormat::Plain(TexturePixelFormat::RgbaPremultiplied),
                     extra: self.extra,
                 }
             }
@@ -585,31 +607,31 @@ impl SharedBufferCommand {
             SharedBufferData::SharedImage(SharedImageBuffer::RGB565(b)) => SceneTexture {
                 data: &b.as_bytes()[start * 2..end * 2],
                 pixel_stride: stride as u16,
-                format: TexturePixelFormat::Rgb565,
+                format: SceneTextureFormat::Plain(TexturePixelFormat::Rgb565),
                 extra: self.extra,
             },
             #[cfg(feature = "image-pixel-format-gray8")]
             SharedBufferData::SharedImage(SharedImageBuffer::Gray8(b)) => SceneTexture {
                 data: &b.as_bytes()[start..end],
                 pixel_stride: stride as u16,
-                format: TexturePixelFormat::Gray8,
+                format: SceneTextureFormat::Plain(TexturePixelFormat::Gray8),
                 extra: self.extra,
             },
             SharedBufferData::AlphaMap { data, width, sdf } => SceneTexture {
                 data: &data.as_slice()[start..end],
                 pixel_stride: *width,
-                format: if *sdf {
+                format: SceneTextureFormat::Plain(if *sdf {
                     TexturePixelFormat::SignedDistanceField
                 } else {
                     TexturePixelFormat::AlphaMap
-                },
+                }),
                 extra: self.extra,
             },
             #[cfg(feature = "owned-pre-rendered-resources")]
             SharedBufferData::Texture { textures, texture } => SceneTexture {
                 data: texture_pixels(&textures.data, texture, start..end),
                 pixel_stride: stride as u16,
-                format: texture.format,
+                format: SceneTextureFormat::Plain(texture.format),
                 extra: self.extra,
             },
             SharedBufferData::SharedImage(_) => unreachable!(

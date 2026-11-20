@@ -35,6 +35,8 @@ pub(super) fn draw_texture_line(
         extra: super::SceneTextureExtra { colorize, alpha, rotation, dx, dy, off_x, off_y },
     } = *texture;
 
+    let compact_alpha = format.is_compact();
+    let format = format.pixel_format();
     let source_size = texture.source_size().cast::<i32>();
     let len = line_buffer.len();
     let y = line - span.origin.y_length();
@@ -100,6 +102,7 @@ pub(super) fn draw_texture_line(
                 fetch_blend_pixel(
                     &mut line_buffer[begin..end],
                     format,
+                    compact_alpha,
                     data,
                     alpha,
                     colorize,
@@ -166,6 +169,7 @@ pub(super) fn draw_texture_line(
             fetch_blend_pixel(
                 &mut line_buffer[begin..end],
                 format,
+                compact_alpha,
                 data,
                 alpha,
                 colorize,
@@ -276,6 +280,7 @@ pub(super) fn draw_texture_line(
     fn fetch_blend_pixel(
         line_buffer: &mut [impl TargetPixel],
         format: TexturePixelFormat,
+        compact_alpha: bool,
         data: &[u8],
         alpha: u8,
         color: Color,
@@ -366,7 +371,12 @@ pub(super) fn draw_texture_line(
                 let opaque = TargetPixel::from_rgb(color.red(), color.green(), color.blue());
                 for pix in line_buffer {
                     let pos = pos(1).0;
-                    let coverage = ((data[pos] as u16 * alpha as u16) / 255) as u8;
+                    let sample = if compact_alpha {
+                        i_slint_common::compact_glyph::alpha_at(data, pos)
+                    } else {
+                        data[pos]
+                    };
+                    let coverage = ((sample as u16 * alpha as u16) / 255) as u8;
                     blend_coverage(pix, opaque, color, coverage);
                 }
             }

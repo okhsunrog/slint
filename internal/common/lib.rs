@@ -13,6 +13,7 @@ pub mod builtin_functions;
 pub mod builtin_structs;
 #[cfg(feature = "color-parsing")]
 pub mod color_parsing;
+pub mod compact_glyph;
 pub mod enums;
 pub mod key_codes;
 pub mod pre_rendered;

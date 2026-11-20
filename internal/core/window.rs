@@ -1341,8 +1341,11 @@ impl WindowInner {
         event_time: Option<crate::animations::Instant>,
         history: TouchHistory,
     ) -> Option<MouseDispatchResult> {
-        let events =
-            self.touch_state.borrow_mut().get_or_insert_with(TouchState::default).process(id, position, phase, event_time, history);
+        let events = self
+            .touch_state
+            .borrow_mut()
+            .get_or_insert_with(TouchState::default)
+            .process(id, position, phase, event_time, history);
         let mut aggregate: Option<MouseDispatchResult> = None;
         for event in events.into_iter() {
             if let Some(r) = self.process_mouse_input(event) {

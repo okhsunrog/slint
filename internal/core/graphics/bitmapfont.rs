@@ -24,3 +24,7 @@ pub type BitmapGlyphs<S = StaticStorage> = i_slint_common::bitmapfont::BitmapGly
 ///
 /// cbindgen:ignore
 pub type BitmapFont<S = StaticStorage> = i_slint_common::bitmapfont::BitmapFont<S>;
+
+/// Enables compact alpha maps in Rust-generated static fonts.
+#[doc(hidden)]
+pub const COMPACT_BITMAP_GLYPHS: bool = cfg!(feature = "compact-bitmap-glyphs");

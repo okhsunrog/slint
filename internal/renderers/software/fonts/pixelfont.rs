@@ -17,7 +17,15 @@ pub trait FontStorage: Storage {
 impl FontStorage for StaticStorage {
     type Font = &'static BitmapFont;
     fn alpha_map(font: &Self::Font, glyph_set: usize, glyph: usize) -> GlyphAlphaMap {
-        GlyphAlphaMap::Static(&font.glyphs[glyph_set].glyph_data[glyph].data)
+        let glyph = &font.glyphs[glyph_set].glyph_data[glyph];
+        if i_slint_core::graphics::COMPACT_BITMAP_GLYPHS
+            && !font.sdf
+            && glyph.data.len() < glyph.width as usize * glyph.height as usize
+        {
+            GlyphAlphaMap::Compact(&glyph.data)
+        } else {
+            GlyphAlphaMap::Static(&glyph.data)
+        }
     }
 }
 

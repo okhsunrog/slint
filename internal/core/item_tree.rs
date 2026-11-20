@@ -531,7 +531,8 @@ impl ItemRc {
                             geometry,
                         ))
                 {
-                    if FLICKABLE_FUNCTIONS.with(|f| f.get().is_some_and(|f| (f.is_flickable)(&ancestor)))
+                    if FLICKABLE_FUNCTIONS
+                        .with(|f| f.get().is_some_and(|f| (f.is_flickable)(&ancestor)))
                         && ancestor.is_visible_or_clipped_by_flickable()
                     {
                         return true;

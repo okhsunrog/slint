@@ -77,6 +77,8 @@ impl RegisteredFont {
 pub enum GlyphAlphaMap {
     /// A glyph of a font that generated code keeps in a static
     Static(&'static [u8]),
+    #[from(skip)]
+    Compact(&'static [u8]),
     /// A glyph of a font built at run time, which it keeps alive while the glyph is drawn
     #[cfg(feature = "owned-pre-rendered-resources")]
     #[from(skip)]
@@ -88,7 +90,7 @@ pub enum GlyphAlphaMap {
 impl GlyphAlphaMap {
     pub fn as_slice(&self) -> &[u8] {
         match self {
-            Self::Static(data) => data,
+            Self::Static(data) | Self::Compact(data) => data,
             #[cfg(feature = "owned-pre-rendered-resources")]
             Self::Shared { font, glyph_set, glyph } => {
                 &font.glyphs[*glyph_set as usize].glyph_data[*glyph as usize].data

@@ -6254,6 +6254,18 @@ fn generate_resources(doc: &Document) -> Vec<TokenStream> {
                         let glyph_data_size = glyph_data.len();
                         let glyph_data = glyph_data.iter().map(|crate::embedded_resources::BitmapGlyph{x, y, width, height, x_advance, data}|{
                             let data_size = data.len();
+                            let packed = (!sdf).then(|| i_slint_common::compact_glyph::encode(data)).flatten();
+                            let storage = if let Some(packed) = packed {
+                                let len = packed.len();
+                                let bytes = proc_macro2::Literal::byte_string(&packed);
+                                quote!({
+                                    #link_section
+                                    static PACKED: [u8; #len] = *#bytes;
+                                    if sp::COMPACT_BITMAP_GLYPHS { &PACKED } else { &DATA }
+                                })
+                            } else {
+                                quote!(&DATA)
+                            };
                             let data = proc_macro2::Literal::byte_string(data);
                             quote!(
                                 sp::BitmapGlyph {
@@ -6265,7 +6277,7 @@ fn generate_resources(doc: &Document) -> Vec<TokenStream> {
                                     data: sp::Slice::from_slice({
                                         #link_section
                                         static DATA : [u8; #data_size] = *#data;
-                                        &DATA
+                                        #storage
                                     }),
                                 }
                             )
