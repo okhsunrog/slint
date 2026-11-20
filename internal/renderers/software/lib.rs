@@ -1834,10 +1834,7 @@ fn gradient_commands(
 
     match brush {
         Brush::LinearGradient(g) if g.stops().nth(1).is_some() => {
-            let (start, end) = i_slint_core::graphics::line_for_angle(
-                g.angle() + rotation.angle(),
-                euclid::size2(box_w, box_h),
-            );
+            let (start, end) = g.line_with_rotation(rotation.angle(), euclid::size2(box_w, box_h));
             let (axis_x, axis_y) = (end.x - start.x, end.y - start.y);
             let length_squared = axis_x * axis_x + axis_y * axis_y;
             let (ux, uy) = (axis_x / length_squared, axis_y / length_squared);

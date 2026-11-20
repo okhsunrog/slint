@@ -234,12 +234,41 @@ impl Brush {
 #[repr(transparent)]
 pub struct LinearGradientBrush(SharedVector<GradientStop>);
 
+// Rust creates its first linear gradient through `new`. Let that call retain the
+// gradient geometry on embedded targets. C++ can build the representation directly.
+#[cfg(not(any(feature = "std", feature = "ffi")))]
+type GradientLine = fn(f32, Size2D<f32>) -> (Point2D<f32>, Point2D<f32>);
+
+#[cfg(not(any(feature = "std", feature = "ffi")))]
+crate::thread_local! {
+    static GRADIENT_LINE: core::cell::Cell<Option<GradientLine>> = const { core::cell::Cell::new(None) };
+}
+
 impl LinearGradientBrush {
+    #[doc(hidden)]
+    pub fn line_with_rotation(
+        &self,
+        rotation: f32,
+        size: Size2D<f32>,
+    ) -> (Point2D<f32>, Point2D<f32>) {
+        let angle = self.angle() + rotation;
+        #[cfg(any(feature = "std", feature = "ffi"))]
+        {
+            line_for_angle(angle, size)
+        }
+        #[cfg(not(any(feature = "std", feature = "ffi")))]
+        {
+            GRADIENT_LINE.with(|f| f.get().expect("linear gradient constructed"))(angle, size)
+        }
+    }
+
     /// Creates a new linear gradient, described by the specified angle and the provided color stops.
     ///
     /// The angle need to be specified in degrees.
     /// The stops don't need to be sorted as this function will sort them.
     pub fn new(angle: f32, stops: impl IntoIterator<Item = GradientStop>) -> Self {
+        #[cfg(not(any(feature = "std", feature = "ffi")))]
+        GRADIENT_LINE.with(|slot| slot.set(Some(line_for_angle)));
         let stop_iter = stops.into_iter();
         let mut encoded_angle_and_stops = SharedVector::with_capacity(stop_iter.size_hint().0 + 1);
         // The gradient's first stop is a fake stop to store the angle

@@ -5317,7 +5317,7 @@ dependencies = [
 
 [[package]]
 name = "test-no-std-metrics"
-version = "1.18.1"
+version = "1.19.0"
 dependencies = [
  "slint",
 ]
