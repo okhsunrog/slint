@@ -3,6 +3,10 @@
 
 export component TestCase inherits Window {
 
+    in-out property input-enabled <=> ti.enabled;
+    callback clear_input_focus();
+    clear_input_focus => { ti.clear-focus(); }
+
     callback set_focus();
     set_focus => {
         ti.focus();
@@ -86,6 +90,27 @@ if let InputMethodRequest::Update(p) = relevant_request {
 } else {
     assert!(false, "InputMethodRequest must be update but it is: {:?}", relevant_request);
 }
+instance.invoke_clear_input_focus();
+let count = ime_requests(&instance).len();
+instance.invoke_move_textinput_y();
+slint_testing::mock_elapsed_time(0);
+assert_eq!(ime_requests(&instance).len(), count, "Unfocused inputs must stop tracking their position");
+
+instance.invoke_set_focus();
+instance.invoke_move_textinput_y();
+slint_testing::mock_elapsed_time(0);
+let requests = ime_requests(&instance);
+assert!(matches!(requests.last(), Some(InputMethodRequest::Update(p))
+    if p.cursor_rect_origin == LogicalPosition::new(10., 20.)));
+
+instance.invoke_clear_input_focus();
+instance.set_input_enabled(false);
+let count = ime_requests(&instance).len();
+instance.invoke_set_focus();
+instance.invoke_move_textinput_x();
+slint_testing::mock_elapsed_time(0);
+assert_eq!(ime_requests(&instance).len(), count, "Rejected focus must not start position tracking");
+
 ```
 
 
